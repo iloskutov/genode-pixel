@@ -57,6 +57,13 @@ the image without flashing it:
 
 The output of Genode appears at the debug UART of the phone (115200 baud).
 
+For repeated tests without touching the phone, the kernel can be built with
+a serial reset monitor. With the build argument 'REBOOT=serial', the line
+"RST" sent to the debug UART reboots the phone into its boot loader, where
+the next image can be started via fastboot:
+
+! make run/log KERNEL=hw BOARD=google_pixel7 REBOOT=serial
+
 
 License
 -------

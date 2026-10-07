@@ -30,6 +30,14 @@ namespace Board {
 
 	class Local_interrupt_controller;
 	class Cpu;
+
+	/**
+	 * Reboot into the boot loader if requested via the kernel's UART
+	 *
+	 * Implemented by 'reboot_serial.cc' or 'reboot_none.cc', selected by the
+	 * build argument REBOOT.
+	 */
+	void poll_serial_reset();
 };
 
 
@@ -68,6 +76,19 @@ class Board::Local_interrupt_controller : public Hw::Local_interrupt_controller
 			if (irq == SPURIOUS || c.lr) return;
 
 			c.lr = irq | 1ULL << 41 | 1ULL << 60 | 1ULL << 62;
+		}
+
+		/**
+		 * Take pending interrupt request
+		 *
+		 * Called by the kernel whenever it handles an interrupt, which
+		 * makes it the hook for the serial reset monitor.
+		 */
+		bool take_request(unsigned &irq)
+		{
+			poll_serial_reset();
+
+			return Hw::Local_interrupt_controller::take_request(irq);
 		}
 
 		/**
