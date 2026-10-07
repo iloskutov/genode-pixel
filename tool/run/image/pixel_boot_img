@@ -1,0 +1,140 @@
+##
+# Create Android boot.img for Google Pixel 7
+#
+# Run-tool image plugin that wraps the Genode image ELF in an AArch64
+# trampoline with ARM64 Linux Image header and packages it as an Android
+# boot image (header v4) suitable for: fastboot boot <image>.img
+#
+# SPDX-License-Identifier: MIT
+#
+
+proc run_image { } {
+
+	set elf_img [file join [run_dir] boot [kernel_specific_binary image.elf]]
+
+	set python3 [installed_command python3]
+
+	#
+	# Locate the trampoline sources and the Android boot-image tools
+	#
+	set pixel_repo [repository_contains tool/boot_img/trampoline.S]
+	if {$pixel_repo == ""} {
+		puts stderr "Error: tool/boot_img/trampoline.S not found in any repository"
+		exit -1
+	}
+
+	set boot_img_dir [file join $pixel_repo tool boot_img]
+
+	set tools_dir [exec [genode_dir]/tool/ports/current android_boot_tools]
+	set mkbootimg [file join $tools_dir mkbootimg mkbootimg.py]
+	set avbtool   [file join $tools_dir avb avbtool.py]
+
+	if {![file exists $mkbootimg] || ![file exists $avbtool]} {
+		puts stderr "Error: port android_boot_tools is not prepared, please execute:"
+		puts stderr "  [genode_dir]/tool/ports/prepare_port android_boot_tools"
+		exit -1
+	}
+
+	#
+	# Convert ELF to flat binary
+	#
+	set bin_img [file join [run_dir] boot genode.bin]
+
+	set entrypoint [exec [cross_dev_prefix]readelf -h $elf_img | \
+	                grep "Entry point address: " | \
+	                sed -e "s/.*Entry point address: *//"]
+
+	exec [cross_dev_prefix]objcopy -O binary $elf_img $bin_img
+
+	#
+	# Pad binary to 8-byte alignment (required by trampoline copy loop)
+	#
+	set genode_size [file size $bin_img]
+	set aligned_size [expr {($genode_size + 7) & ~7}]
+	if {$genode_size != $aligned_size} {
+		set pad [expr {$aligned_size - $genode_size}]
+		exec dd if=/dev/zero bs=1 count=$pad >> $bin_img 2>/dev/null
+	}
+
+	#
+	# Build trampoline
+	#
+	set tramp_obj [file join [run_dir] boot trampoline.o]
+	set tramp_elf [file join [run_dir] boot trampoline.elf]
+	set tramp_bin [file join [run_dir] boot trampoline.bin]
+
+	exec [cross_dev_prefix]as [file join $boot_img_dir trampoline.S] \
+	     -o $tramp_obj
+	exec [cross_dev_prefix]ld -T [file join $boot_img_dir trampoline.ld] \
+	     $tramp_obj -o $tramp_elf
+	exec [cross_dev_prefix]objcopy -O binary $tramp_elf $tramp_bin
+
+	#
+	# Patch sentinels and concatenate trampoline + Genode binary
+	#
+	set kernel_bin [file join [run_dir] boot kernel.bin]
+
+	exec $python3 - $tramp_bin $bin_img $kernel_bin $entrypoint << {
+import struct, sys
+
+tramp_path, genode_path, kernel_path, entry_str = sys.argv[1:5]
+
+tramp  = bytearray(open(tramp_path, 'rb').read())
+genode = open(genode_path, 'rb').read()
+entry  = int(entry_str, 0)
+
+# Patch _genode_size sentinel (0xDEADBEEFCAFEBABE)
+size_sentinel = struct.pack('<Q', 0xDEADBEEFCAFEBABE)
+idx = tramp.find(size_sentinel)
+if idx < 0:
+    print("Error: size sentinel not found in trampoline", file=sys.stderr)
+    sys.exit(1)
+tramp[idx:idx+8] = struct.pack('<Q', len(genode))
+
+# Patch _entry_point sentinel (0xCAFEBABEDEADBEEF)
+entry_sentinel = struct.pack('<Q', 0xCAFEBABEDEADBEEF)
+idx = tramp.find(entry_sentinel)
+if idx < 0:
+    print("Error: entry sentinel not found in trampoline", file=sys.stderr)
+    sys.exit(1)
+tramp[idx:idx+8] = struct.pack('<Q', entry)
+
+# Patch image_size in ARM64 Image header (offset 16)
+total = len(tramp) + len(genode)
+tramp[16:24] = struct.pack('<Q', total)
+
+with open(kernel_path, 'wb') as f:
+    f.write(tramp)
+    f.write(genode)
+}
+
+	#
+	# Create Android boot.img (header v4)
+	#
+	set boot_img [run_dir].img.incomplete
+
+	exec $python3 $mkbootimg \
+	     --header_version 4 \
+	     --kernel $kernel_bin \
+	     --cmdline "" \
+	     -o $boot_img
+
+	#
+	# Add AVB hash footer (required by Pixel 7 bootloader)
+	#
+	exec $python3 $avbtool add_hash_footer \
+	     --image $boot_img \
+	     --partition_name boot \
+	     --dynamic_partition_size
+
+	#
+	# Clean up intermediate files
+	#
+	exec rm -f $bin_img $tramp_obj $tramp_elf $tramp_bin $kernel_bin
+
+	exec mv $boot_img [run_dir].img
+
+	set img_size [file size [run_dir].img]
+	puts "Created boot image [run_dir].img ($img_size bytes)"
+	puts "Boot with: fastboot boot [run_dir].img"
+}

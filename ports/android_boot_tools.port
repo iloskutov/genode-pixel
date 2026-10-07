@@ -1,0 +1,15 @@
+LICENSE   := Apache-2.0
+VERSION   := git
+DOWNLOADS := mkbootimg.git avb.git
+
+#
+# Host tools for packaging a Genode image as Android boot image, used by
+# the run-tool plugin tool/run/image/pixel_boot_img
+#
+URL(mkbootimg) := https://android.googlesource.com/platform/system/tools/mkbootimg
+REV(mkbootimg) := d2bb0af5ba6d3198a3e99529c97eda1be0b5a093
+DIR(mkbootimg) := mkbootimg
+
+URL(avb) := https://android.googlesource.com/platform/external/avb
+REV(avb) := 761178607206f4cb2af79ed9eec52d8cbd814adb
+DIR(avb) := avb

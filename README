@@ -1,0 +1,87 @@
+Genode on the Google Pixel 7 (panther, Tensor G2 / gs201)
+
+This repository contains the board support for the base-hw kernel and the
+run-tool plugin that packages a Genode image as an Android boot image.
+
+Documentation
+-------------
+
+* doc/why_pixel.md           Why this phone, current state
+* doc/device_preparation.md  Unlocking the boot loader, serial console
+
+
+Note on authorship
+------------------
+
+This port is heavily LLM-assisted: large parts of the code were written with
+the help of an AI coding assistant (Claude) and reviewed and tested by the
+author. Please take this into account when reusing the code or considering
+it for projects that do not accept LLM-assisted contributions.
+
+
+Usage
+-----
+
+The repository is meant to be placed at 'repos/pixel' within the Genode
+source tree. The following steps are executed in the root directory of the
+Genode source tree. They require the Genode tool chain.
+
+Create a build directory for the 64-bit ARM architecture:
+
+! tool/create_builddir arm_v8a
+
+Add the repository to the build configuration 'build/arm_v8a/etc/build.conf'.
+The 'REPOSITORIES' line must appear before the line that adds 'base-$(KERNEL)'.
+The second line selects the image plugin for the board:
+
+! REPOSITORIES += $(GENODE_DIR)/repos/pixel
+! BOARD_RUN_OPT(google_pixel7) := --include image/pixel_boot_img
+
+Download the mkbootimg and avbtool utilities, which are used by the image
+plugin and provided by a port:
+
+! tool/ports/prepare_port android_boot_tools
+
+Build a scenario, e.g., 'run/log'. The result is the Android boot image
+'var/run/<scenario>.img' within the build directory:
+
+! cd build/arm_v8a
+! make run/log KERNEL=hw BOARD=google_pixel7
+
+To start the image, the boot loader of the phone must be unlocked. Bring the
+phone into the fastboot mode (hold volume-down while powering on, or execute
+'adb reboot bootloader' from a running Android), connect it via USB, and boot
+the image without flashing it:
+
+! fastboot boot var/run/log.img
+
+The output of Genode appears at the debug UART of the phone (115200 baud).
+
+
+License
+-------
+
+This repository is not part of the Genode OS framework. It combines code of
+different origin, and each part keeps the license of its origin:
+
+* Code written for this repository is distributed under the MIT license
+  (file LICENSE). These files are marked with 'SPDX-License-Identifier: MIT'.
+
+* Files derived from the Genode OS framework are distributed under the terms
+  of the GNU Affero General Public License version 3 with Genode's linking
+  exception (file LICENSE.AGPL, a copy of Genode's LICENSE file). They keep
+  the copyright notice of Genode Labs and name the file they are derived
+  from in their header.
+
+* Third-party code is not part of this repository. It is downloaded by the
+  ports in the 'ports' directory and stays under its own license, which is
+  named by the 'LICENSE' declaration of the respective port file. Patches
+  for such code in the 'patches' directory follow the license of the code
+  they apply to.
+
+If a file states a license in its header, the header takes precedence.
+
+For the MIT-licensed code, a different license can be granted on request.
+Please contact the author, Ivan Loskutov, via the issue tracker of this
+repository. This does not extend to the files derived from Genode or to
+third-party code, which can only be relicensed by their copyright holders.
