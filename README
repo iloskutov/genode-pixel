@@ -1,7 +1,12 @@
 Genode on the Google Pixel 7 (panther, Tensor G2 / gs201)
 
-This repository contains the board support for the base-hw kernel and the
-run-tool plugin that packages a Genode image as an Android boot image.
+This repository contains
+
+* the board support for the base-hw kernel,
+* the run-tool plugin that packages a Genode image as an Android boot image,
+* the platform driver and the pin driver for the GS201 SoC, and
+* the framebuffer driver for the display, a port of the vendor's Linux
+  driver.
 
 Documentation
 -------------
@@ -37,10 +42,22 @@ The second line selects the image plugin for the board:
 ! REPOSITORIES += $(GENODE_DIR)/repos/pixel
 ! BOARD_RUN_OPT(google_pixel7) := --include image/pixel_boot_img
 
+The drivers additionally need the repositories 'libports' and 'dde_linux',
+which are enabled by uncommenting their 'REPOSITORIES' lines in the same
+file.
+
 Download the mkbootimg and avbtool utilities, which are used by the image
 plugin and provided by a port:
 
 ! tool/ports/prepare_port android_boot_tools
+
+The Linux-based drivers are built from third-party sources, which are
+provided by ports as well. The kernel is a large download. The device tree
+of a driver is compiled by the 'dtc' tool, which must be installed on the
+host.
+
+! tool/ports/prepare_port pixel_linux jitterentropy google_display \
+!                         google_soc_gs
 
 Build a scenario, e.g., 'run/log'. The result is the Android boot image
 'var/run/<scenario>.img' within the build directory:
@@ -56,6 +73,16 @@ the image without flashing it:
 ! fastboot boot var/run/log.img
 
 The output of Genode appears at the debug UART of the phone (115200 baud).
+
+The framebuffer driver can be tested with the scenario 'run/exynos_fb_pixel',
+which shows a test pattern on the display.
+
+The Linux-based drivers combine Genode's device-driver environment for
+Linux with files of this repository that fit the 6.1 kernel of the phone,
+see 'src/lx_emul_6_1/README'. After an update of the Genode source tree, the
+following tool tells whether the files taken from Genode have changed:
+
+! repos/pixel/tool/check_dde_drift build/arm_v8a
 
 For repeated tests without touching the phone, the kernel can be built with
 a serial reset monitor. With the build argument 'REBOOT=serial', the line
@@ -79,6 +106,10 @@ different origin, and each part keeps the license of its origin:
   exception (file LICENSE.AGPL, a copy of Genode's LICENSE file). They keep
   the copyright notice of Genode Labs and name the file they are derived
   from in their header.
+
+* Files derived from the Linux kernel, and files derived from Genode's
+  device-driver environment for Linux, are distributed under the terms of
+  the GNU General Public License version 2, as stated in their header.
 
 * Third-party code is not part of this repository. It is downloaded by the
   ports in the 'ports' directory and stays under its own license, which is

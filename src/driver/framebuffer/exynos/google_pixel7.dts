@@ -1,0 +1,313 @@
+/dts-v1/;
+
+/*
+ * \brief  Device tree of the display of the Google Pixel 7
+ * \author Ivan Loskutov
+ * \date   2026-10-09
+ *
+ * The tree describes what the exynos-drm driver needs: the display controller
+ * DECON0 with its DPP channels, the MIPI DSI host with its D-PHY and the
+ * s6e3fc3 panel, the two GPIO banks the driver uses (panel reset, tearing
+ * effect), the interrupt controller, and the framebuffer left by the boot
+ * loader. The values are those of the vendor's device tree for the phone
+ * (gs201-panther).
+ *
+ * Left out are references that have no counterpart in the driver's Linux
+ * emulation environment: regulators (the supplies are switched by the
+ * platform driver), the IOMMU, power domains (platform driver), and the
+ * panel's reference to the touchscreen.
+ */
+
+/*
+ * SPDX-License-Identifier: GPL-2.0
+ */
+
+/ {
+	model = "GS201 PANTHER MP based on GS201";
+	#address-cells = <2>;
+	#size-cells = <1>;
+	compatible = "google,GS201 PANTHER", "google,GS201";
+	interrupt-parent = <&gic>;
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		/* framebuffer of the boot loader, scanned out at the hand-over */
+		fb_handover: fb_handover@fac00000 {
+			reg = <0 0xfac00000 0xa00000>;
+		};
+	};
+
+	pinctrl@180E0000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x180e0000 0x1000>;
+
+		/* pin 1: reset line of the panel */
+		gpa7: gpa7 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 0x34 4>,
+			             <0 0x35 4>,
+			             <0 0x36 4>,
+			             <0 0x37 4>;
+		};
+	};
+
+	pinctrl@10840000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x10840000 0x1000>;
+
+		/* pin 3: tearing-effect signal of the panel */
+		gpp0: gpp0 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+
+		disp_te_pri_on: disp-te-pri-on {
+			samsung,pins = "gpp0-3";
+			samsung,pin-function = <0xf>;
+		};
+
+		disp_te_pri_off: disp-te-pri-off {
+			samsung,pins = "gpp0-3";
+			samsung,pin-function = <0>;
+		};
+	};
+
+	/* PLL parameters of the DSI host for the panel's mode */
+	dsim_modes: dsim_modes {
+		pll-input = <0 0x1770000>;
+		pll-optimum = <0 0xc65d40>;
+		pll-out-range = <0 0x3197500 1 0x89640200>;
+		pll-vco-range = <0 0xc4b20100 1 0x89640200>;
+		p-range = <1 0x3f>;
+		m-range = <0x40 0x3ff>;
+		s-range = <0 6>;
+		k-bits = <0x10>;
+
+		dsim-modes {
+			1080x2400 {
+				mode-name = "1080x2400";
+				pmsk = <2 0xb3 2 0x5cab>;
+				hs-clk = <0x44e>;
+				esc-clk = <0x14>;
+			};
+		};
+	};
+
+	drmdpp0: drmdpp@1C0B0000 {
+		compatible = "samsung,exynos-dpp";
+		reg = <0 0x1c0b0000 0x1000>,
+		      <0 0x1c0d0000 0x1000>,
+		      <0 0x1c0e0000 0x1000>;
+		reg-names = "dma", "dpp", "hdr";
+		interrupts = <0 0x106 4>,
+		             <0 0x10f 4>;
+		interrupt-names = "dma", "dpp";
+		attr = <0x50047>;
+		port = <0>;
+		scale_down = <1>;
+		scale_up = <1>;
+		dpp,id = <0>;
+	};
+
+	drmdpp1: drmdpp@1C0B1000 {
+		compatible = "samsung,exynos-dpp";
+		reg = <0 0x1c0b1000 0x1000>,
+		      <0 0x1c0d1000 0x1000>,
+		      <0 0x1c0e1000 0x1000>;
+		reg-names = "dma", "dpp", "hdr";
+		interrupts = <0 0x107 4>,
+		             <0 0x110 4>;
+		interrupt-names = "dma", "dpp";
+		attr = <0x50c7f>;
+		port = <0>;
+		scale_down = <4>;
+		scale_up = <8>;
+		dpp,id = <1>;
+		dpp,video;
+	};
+
+	drmdpp2: drmdpp@1C0B2000 {
+		compatible = "samsung,exynos-dpp";
+		reg = <0 0x1c0b2000 0x1000>,
+		      <0 0x1c0d2000 0x1000>,
+		      <0 0x1c0e2000 0x1000>;
+		reg-names = "dma", "dpp", "hdr";
+		interrupts = <0 0x108 4>,
+		             <0 0x111 4>;
+		interrupt-names = "dma", "dpp";
+		attr = <0x50047>;
+		port = <1>;
+		scale_down = <1>;
+		scale_up = <1>;
+		dpp,id = <2>;
+	};
+
+	drmdpp3: drmdpp@1C0B3000 {
+		compatible = "samsung,exynos-dpp";
+		reg = <0 0x1c0b3000 0x1000>,
+		      <0 0x1c0d3000 0x1000>,
+		      <0 0x1c0e3000 0x1000>;
+		reg-names = "dma", "dpp", "hdr";
+		interrupts = <0 0x109 4>,
+		             <0 0x112 4>;
+		interrupt-names = "dma", "dpp";
+		attr = <0x50c7f>;
+		port = <1>;
+		scale_down = <4>;
+		scale_up = <8>;
+		dpp,id = <3>;
+		dpp,video;
+	};
+
+	drmdpp4: drmdpp@1C0B4000 {
+		compatible = "samsung,exynos-dpp";
+		reg = <0 0x1c0b4000 0x1000>,
+		      <0 0x1c0d4000 0x1000>,
+		      <0 0x1c0e4000 0x1000>;
+		reg-names = "dma", "dpp", "hdr";
+		interrupts = <0 0x10a 4>,
+		             <0 0x113 4>;
+		interrupt-names = "dma", "dpp";
+		attr = <0x50047>;
+		port = <2>;
+		scale_down = <1>;
+		scale_up = <1>;
+		dpp,id = <4>;
+	};
+
+	drmdpp5: drmdpp@1C0B5000 {
+		compatible = "samsung,exynos-dpp";
+		reg = <0 0x1c0b5000 0x1000>,
+		      <0 0x1c0d5000 0x1000>,
+		      <0 0x1c0e5000 0x1000>;
+		reg-names = "dma", "dpp", "hdr";
+		interrupts = <0 0x10b 4>,
+		             <0 0x114 4>;
+		interrupt-names = "dma", "dpp";
+		attr = <0x50c7f>;
+		port = <2>;
+		scale_down = <4>;
+		scale_up = <8>;
+		dpp,id = <5>;
+		dpp,video;
+	};
+
+	drmdpp8: drmdpp@1C0B8000 {
+		compatible = "samsung,exynos-dpp";
+		reg = <0 0x1c0b8000 0x1000>;
+		reg-names = "dma";
+		interrupts = <0 0x10c 4>;
+		interrupt-names = "dma";
+		attr = <0x100000>;
+		port = <0>;
+		dpp,id = <6>;
+	};
+
+	disp_ss@1C221000 {
+		compatible = "samsung,exynos9-disp_ss";
+		reg = <0 0x1c221000 0x10>;
+		reg-names = "sys";
+	};
+
+	mipi_phy_dsim0_m4m4: dphy_m4s4_dsim0@1C2E0000 {
+		compatible = "samsung,mipi-phy-m4m4";
+		isolation = <0x3eb8>;
+		owner = <0>;
+		#phy-cells = <1>;
+	};
+
+	drmdsim@1C2C0000 {
+		compatible = "samsung,exynos-dsim";
+		reg = <0 0x1c2c0000 0x300>,
+		      <0 0x1c2e0100 0x700>,
+		      <0 0x1c2e0000 0x100>;
+		reg-names = "dsi", "dphy", "dphy-extra";
+		dsim,id = <0>;
+		interrupts = <0 0xfa 4>;
+		interrupt-names = "dsim";
+		phys = <&mipi_phy_dsim0_m4m4 0>;
+		phy-names = "dsim_dphy";
+		dsim_mode = <&dsim_modes>;
+		te_from = <0>;
+		te-gpio = <&gpp0 3 0xf>;
+		pinctrl-names = "hw_te_on", "hw_te_off";
+		pinctrl-0 = <&disp_te_pri_on>;
+		pinctrl-1 = <&disp_te_pri_off>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		panel@0 {
+			reset-gpios = <&gpa7 1 0>;
+			channel = <0>;
+			label = "sdc-s6e3fc3-p10";
+			compatible = "samsung,s6e3fc3-p10";
+		};
+	};
+
+	drmdecon@1C240000 {
+		memory-region = <&fb_handover>;
+		compatible = "samsung,exynos-decon";
+		reg = <0 0x1c240000 0x6000>,
+		      <0 0x1c250000 0x6000>,
+		      <0 0x1c260000 0x10000>,
+		      <0 0x1c270000 0x6000>,
+		      <0 0x1c2a0000 0xf000>,
+		      <0 0x1c0be000 0x1000>;
+		reg-names = "main", "win", "sub", "wincon", "dqe", "cgc-dma";
+		decon,id = <0>;
+		cgc-dma,id = <9>;
+		interrupts = <0 0xf1 4>,
+		             <0 0xf0 4>,
+		             <0 0xef 4>,
+		             <0 0xee 4>,
+		             <0 0xed 4>,
+		             <0 0x104 4>;
+		interrupt-names = "frame_start", "frame_done", "extra", "dimming_start", "dimming_end", "cgc-dma";
+		samsung,tzmp;
+		max_win = <6>;
+		ppc = <2>;
+		ppc_rotator = <4>;
+		ppc_scaler = <2>;
+		delay_comp = <4>;
+		delay_scaler = <3>;
+		bus_width = <0x10>;
+		bus_util = <0x41>;
+		rot_util = <0x3c>;
+		dfs_lv_cnt = <7>;
+		dfs_lv = <0xa21c0 0x82208 0x71868 0x61a80 0x4baf0 0x412f8 0x20b70>;
+		rd_en = <1>;
+		rd_hi_thres = <0x800>;
+		rd_lo_thres = <0x400>;
+		rd_wait_cycle = <0x10>;
+		wr_en = <0>;
+		wr_hi_thres = <0>;
+		wr_lo_thres = <0>;
+		dta_en = <1>;
+		dta_hi_thres = <0x3200>;
+		dta_lo_thres = <0x600>;
+		dpps = <&drmdpp0 &drmdpp1 &drmdpp2 &drmdpp3 &drmdpp4 &drmdpp5>;
+		connector = <1 2 8>;
+		hibernation;
+		rcd = <&drmdpp8>;
+		itmon,port = "DPU", "DISP";
+		itmon,dest = "DPU", "DISP";
+	};
+
+	gic: interrupt-controller@10400000 {
+		compatible = "arm,gic-v3";
+		#interrupt-cells = <3>;
+		interrupt-controller;
+		reg = <0 0x10400000 0x10000>,
+		      <0 0x10440000 0x100000>;
+		interrupts = <1 9 4>;
+	};
+};

@@ -6,4 +6,55 @@ devices
   . gpa11), used by the pin driver gs201_pio
   .
   + io_mem | address: 0x180e0000 | size: 0x1000
+
++ device dpu | type: samsung,exynos-decon
+  .
+  . Display processing unit: DECON0 and all DPP channels, as described
+  . by the device-tree nodes drmdecon@1C240000, drmdpp@1C0B[0-9]000, and
+  . disp_ss. An interrupt number is the SPI number of the device tree
+  . plus 32.
+  .
+  + io_mem | address: 0x1c0b0000 | size: 0xa000  | . DPP DMA 0-7
+  + io_mem | address: 0x1c0be000 | size: 0x1000  | . CGC DMA
+  + io_mem | address: 0x1c0d0000 | size: 0x6000  | . DPP 0-5
+  + io_mem | address: 0x1c0e0000 | size: 0x6000  | . HDR 0-5
+  + io_mem | address: 0x1c221000 | size: 0x1000  | . DISP_SS
+  + io_mem | address: 0x1c240000 | size: 0x6000  | . DECON main
+  + io_mem | address: 0x1c250000 | size: 0x6000  | . DECON win
+  + io_mem | address: 0x1c260000 | size: 0x10000 | . DECON sub
+  + io_mem | address: 0x1c270000 | size: 0x6000  | . DECON0 wincon
+  + io_mem | address: 0x1c2a0000 | size: 0xf000  | . DECON0 DQE
+  + io_mem | address: 0xfac00000 | size: 0xa00000
+    . framebuffer of the boot loader, excluded from core's RAM
+  + irq | number: 273 | . DECON0 frame_start
+  + irq | number: 272 | . DECON0 frame_done
+  + irq | number: 271 | . DECON0 extra
+  + irq | number: 270 | . DECON0 dimming_start
+  + irq | number: 269 | . DECON0 dimming_end
+  + irq | number: 292 | . DECON0 cgc-dma
+  + irq | number: 294 | . DPP DMA 0-7
+  + irq | number: 295
+  + irq | number: 296
+  + irq | number: 297
+  + irq | number: 298
+  + irq | number: 299
+  + irq | number: 300
+  + irq | number: 301
+  + irq | number: 303 | . DPP 0-5
+  + irq | number: 304
+  + irq | number: 305
+  + irq | number: 306
+  + irq | number: 307
+  + irq | number: 308
+  + power-domain dpu-power
+
++ device dsim0 | type: samsung,exynos-dsim
+  .
+  . MIPI DSI master 0 and its D-PHY (drmdsim@1C2C0000), panel supplies
+  .
+  + io_mem | address: 0x1c2c0000 | size: 0x1000 | . DSIM0
+  + io_mem | address: 0x1c2e0000 | size: 0x1000 | . D-PHY
+  + irq | number: 282
+  + power-domain dpu-power
+  + power-domain panel-power
 -

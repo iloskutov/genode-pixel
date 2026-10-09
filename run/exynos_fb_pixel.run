@@ -1,0 +1,137 @@
+#
+# Framebuffer driver for the display of the Google Pixel 7
+#
+# The driver 'exynos_fb' takes over the display pipeline as set up by the
+# boot loader and shows the pattern of the framebuffer test. The power
+# domains and the supplies of the panel are provided by 'gs201_platform',
+# the reset line of the panel by 'gs201_pio'.
+#
+# With DISPLAY_TOGGLE=yes in the environment, the configuration of the driver
+# changes over time: the brightness is set to 20 percent after 10 seconds,
+# the display is switched off after 20 seconds, and on again 15 seconds
+# later.
+#
+
+assert {[have_board google_pixel7]}
+
+set display_toggle [expr {[info exists ::env(DISPLAY_TOGGLE)] && $::env(DISPLAY_TOGGLE) == "yes"}]
+
+build {
+	core init lib/ld timer
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/framebuffer/exynos
+	test/framebuffer
+}
+
+if {$display_toggle} { build { server/dynamic_rom } }
+
+create_boot_directory
+
+set config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start platform | caps: 150 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+  + config
+    + policy | label_prefix: gs201_pio | info: yes
+      + device gpio_far_alive
+    + policy | label_prefix: exynos_fb | info: yes
+      + device dpu
+      + device dsim0
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start gs201_pio | caps: 150 | ram: 2M
+  + provides
+    + service Pin_state
+    + service Pin_control
+    + service IRQ
+  + config
+    + out panel_reset | bank: gpa7 | index: 1 | default: yes
+      . reset line of the panel, high since the boot loader enabled the panel
+    + policy | label: exynos_fb -> gpa7-1 | pin: panel_reset
+  + route
+    + service Platform | + child platform
+    + any-service      | + parent
+
++ start test-framebuffer | ram: 12M
+  + provides | + service Capture
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+}
+
+if {$display_toggle} { append config {
++ start dynamic_rom | ram: 4M
+  + provides | + service ROM
+  + config | verbose: yes
+    + rom exynos_fb.config
+      + inline | + config | display: on
+      + sleep  | milliseconds: 10000
+      + inline | + config | display: on  | brightness: 20
+      + sleep  | milliseconds: 10000
+      + inline | + config | display: off | brightness: 20
+      + sleep  | milliseconds: 15000
+      + inline | + config | display: on  | brightness: 20
+      + sleep  | milliseconds: 100000
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+} }
+
+append config {
++ start exynos_fb | caps: 500 | ram: 96M}
+
+#
+# A config node within the start node would take precedence over the
+# config ROM of dynamic_rom.
+#
+if {$display_toggle} {
+	append config {
+  + route
+    + service ROM | label: config | + child dynamic_rom | label: exynos_fb.config}
+} else {
+	append config {
+  + config | display: on
+  + route}
+}
+
+append config {
+    + service ROM | label: dtb | + parent | label: exynos_fb-google_pixel7.dtb
+    + service Platform    | + child platform
+    + service Dma         | + child platform
+    + service Pin_state   | + child gs201_pio
+    + service Pin_control | + child gs201_pio
+    + service Capture     | + child test-framebuffer
+    + service Timer       | + child timer
+    + any-service         | + parent
+-
+}
+
+install_config $config
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
