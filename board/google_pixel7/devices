@@ -1,0 +1,9 @@
+devices
+
++ device gpio_far_alive | type: samsung,gs201-gpio
+  .
+  . GPIO controller of the FAR_ALIVE domain (banks gpa6, gpa7, gpa8,
+  . gpa11), used by the pin driver gs201_pio
+  .
+  + io_mem | address: 0x180e0000 | size: 0x1000
+-
