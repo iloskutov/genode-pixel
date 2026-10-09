@@ -1,0 +1,36 @@
+Linux-facing files of the device-driver environment for the Linux 6.1 kernel
+
+The drivers of this repository that are ported from Linux are based on the
+Android 6.1 kernel of the Pixel 7, as the vendor's drivers exist for this
+kernel only. They use the device-driver environment (DDE) of Genode's
+'dde_linux' repository, which follows a much newer kernel. Until Genode
+26.05, the Linux-facing files of the DDE supported older kernels via checks
+of the kernel version. These checks were removed from Genode in July 2026
+(commit "dde_linux: remove no longer needed version checks").
+
+This directory contains those Linux-facing files that the 6.1 kernel needs
+in another form than the current 'dde_linux' repository provides. It mirrors
+the structure of 'repos/dde_linux/src'. The files are taken unmodified from
+Genode 25.11, the version the drivers were developed with. Their copyright
+and license are stated in their headers.
+
+All other files of the DDE come from the 'dde_linux' repository: the
+Genode-facing code (C++ sources, lx_kit, the lx_emul API headers) and the
+Linux-facing files that fit both kernels. The import file
+'lib/import/import-pixel_lx_emul.mk' gives the files of this directory
+precedence.
+
+
+Following a change of Genode
+----------------------------
+
+The file 'tree_files.sha256' lists the Linux-facing files that the drivers
+take from the 'dde_linux' repository, with the hash of the content they were
+built and tested with. The tool 'tool/check_dde_drift' compares the files a
+build has used with this list:
+
+! tool/check_dde_drift <build-dir>
+
+A reported file was changed, or newly introduced, by an update of Genode.
+If it still fits the 6.1 kernel, the list is renewed by the tool's '--update'
+argument. If not, its previous version is added to this directory.

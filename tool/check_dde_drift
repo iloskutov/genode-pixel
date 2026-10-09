@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+#
+# \brief  Detect changes of the dde_linux files the Pixel drivers depend on
+# \author Ivan Loskutov
+# \date   2026-10-11
+#
+# SPDX-License-Identifier: MIT
+#
+# The Linux-based drivers of this repository take the Linux-facing files of
+# the device-driver environment partly from 'src/lx_emul_6_1' and partly
+# from Genode's 'dde_linux' repository, see src/lx_emul_6_1/README. This tool
+# inspects the dependency files of a build and reports
+#
+# * files taken from 'dde_linux' whose content differs from the one recorded
+#   in 'src/lx_emul_6_1/tree_files.sha256',
+# * files taken from 'dde_linux' that are not recorded at all, and
+# * files of 'src/lx_emul_6_1' that were bypassed, i.e., the build used the
+#   file of 'dde_linux' with the same path.
+#
+# usage: check_dde_drift [--update] <build-dir>
+#
+# With '--update', the recorded list is replaced by the files and hashes of
+# the inspected build. The exit status is 1 if anything was reported.
+#
+
+import hashlib
+import os
+import sys
+
+TREE_MARK  = '/repos/dde_linux/src/'
+
+
+def usage():
+    sys.exit('usage: check_dde_drift [--update] <build-dir>')
+
+
+def linux_facing(path):
+    return path.endswith('.c') or '/shadow/' in path
+
+
+def prerequisites(dep_file):
+    """Return the prerequisites listed by a compiler-generated '.d' file."""
+    with open(dep_file, errors='replace') as f:
+        tokens = f.read().replace('\\\n', ' ').split()
+    #
+    # The file starts with the rule of the object: its targets, a colon, and
+    # the prerequisites. It may be followed by an empty rule per header.
+    #
+    result = []
+    in_prerequisites = False
+    for token in tokens:
+        if token.endswith(':'):
+            if in_prerequisites:
+                break
+            in_prerequisites = True
+        elif in_prerequisites:
+            result.append(token)
+
+    base = os.path.dirname(dep_file)
+    return [os.path.realpath(os.path.join(base, t)) for t in result]
+
+
+def target_dir(dep_file, source):
+    """
+    Return the build directory of the target a '.d' file belongs to.
+
+    An object is placed at the path of its source as stated by the target,
+    e.g., '<target-dir>/lx_emul/shadow/kernel/cpu.o'. Hence, the target
+    directory is what remains after stripping the path components that the
+    object and its source have in common.
+    """
+    obj = os.path.splitext(dep_file)[0].split(os.sep)
+    src = os.path.splitext(source)[0].split(os.sep)
+    while obj and src and obj[-1] == src[-1]:
+        obj.pop()
+        src.pop()
+    return os.sep.join(obj)
+
+
+def sha256(path):
+    with open(path, 'rb') as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def main():
+    args   = [a for a in sys.argv[1:] if a != '--update']
+    update = '--update' in sys.argv[1:]
+    if len(args) != 1 or not os.path.isdir(args[0]):
+        usage()
+
+    build_dir = os.path.realpath(args[0])
+    repo_dir  = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    owned_dir = os.path.join(repo_dir, 'src', 'lx_emul_6_1')
+    manifest  = os.path.join(owned_dir, 'tree_files.sha256')
+
+    # dependency files of the build, each with its prerequisites
+    dep_files = {}
+    for root, _, names in os.walk(build_dir):
+        for name in names:
+            if name.endswith('.d'):
+                dep_file = os.path.join(root, name)
+                deps = prerequisites(dep_file)
+                if deps:
+                    dep_files[dep_file] = deps
+
+    #
+    # Only targets that use the files of this repository are of interest.
+    # Each of them compiles at least one source of 'src/lx_emul_6_1', which
+    # reveals the build directory of the target.
+    #
+    target_dirs = { target_dir(dep_file, deps[0])
+                    for dep_file, deps in dep_files.items()
+                    if deps[0].startswith(owned_dir + os.sep) }
+
+    used = {}
+    for dep_file, deps in dep_files.items():
+        if not any(dep_file.startswith(t + os.sep) for t in target_dirs):
+            continue
+        for d in deps:
+            if TREE_MARK in d and linux_facing(d):
+                used[d.split(TREE_MARK, 1)[1]] = d
+
+    if not used:
+        sys.exit(f'Error: no build of a Linux-based Pixel driver found in {build_dir}')
+
+    current = {rel: sha256(path) for rel, path in used.items()}
+
+    if update:
+        with open(manifest, 'w') as f:
+            for rel in sorted(current):
+                f.write(f'{current[rel]}  {rel}\n')
+        print(f'recorded {len(current)} files in {os.path.relpath(manifest)}')
+        return 0
+
+    recorded = {}
+    if os.path.exists(manifest):
+        with open(manifest) as f:
+            for line in f:
+                if line.strip():
+                    digest, rel = line.split(None, 1)
+                    recorded[rel.strip()] = digest
+
+    changed  = sorted(r for r in current if r in recorded and recorded[r] != current[r])
+    new      = sorted(r for r in current if r not in recorded)
+    bypassed = sorted(r for r in current if os.path.exists(os.path.join(owned_dir, r)))
+    unused   = sorted(r for r in recorded if r not in current)
+
+    for title, files in (('changed in dde_linux', changed),
+                         ('taken from dde_linux but not recorded', new),
+                         ('present in src/lx_emul_6_1 but taken from dde_linux', bypassed)):
+        if files:
+            print(f'{title}:')
+            for rel in files:
+                print(f'  {rel}')
+
+    if unused:
+        print(f'note: {len(unused)} recorded files are not used by this build')
+
+    if changed or new or bypassed:
+        return 1
+
+    print(f'{len(current)} Linux-facing files of dde_linux match the recorded state')
+    return 0
+
+
+sys.exit(main())
