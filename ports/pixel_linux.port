@@ -1,0 +1,14 @@
+LICENSE   := GPLv2
+VERSION   := 8769cc47188c3bdca2a34d39ba0f39a945b85465
+DOWNLOADS := pixel_linux.archive
+
+#
+# Android common kernel 6.1 as used by the Pixel 7, the base of the
+# Linux-based drivers of this repository. The snapshot comes from the GitHub
+# mirror of AOSP because the tarballs of android.googlesource.com differ on
+# each download.
+#
+URL(pixel_linux)  := https://github.com/aosp-mirror/kernel_common/archive/$(VERSION).tar.gz
+NAME(pixel_linux) := pixel_linux-$(VERSION).tar.gz
+SHA(pixel_linux)  := 9ed47d75a57021f5ddc30d007571497b361a9484b4cc9a010720f341ccc83ab0
+DIR(pixel_linux)  := src/linux
