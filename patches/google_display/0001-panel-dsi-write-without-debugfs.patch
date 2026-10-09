@@ -1,0 +1,152 @@
+panel-samsung-drv: DSI command writes without CONFIG_DEBUG_FS
+
+exynos_dsi_dcs_write_buffer(), exynos_dcs_write_delay() and their helper
+exynos_dsi_dcs_transfer() are the panel command path, but upstream placed
+them inside the #ifdef CONFIG_DEBUG_FS block (Android always has debugfs).
+Move them in front of it, as Genode's Linux emulation has no debugfs.
+
+--- a/src/google_display/samsung/panel/panel-samsung-drv.c	2026-09-30 09:50:35.350833806 +0200
++++ b/src/google_display/samsung/panel/panel-samsung-drv.c	2026-09-30 09:50:35.373981824 +0200
+@@ -2942,6 +2942,71 @@
+ 	.get_modes = exynos_drm_connector_modes,
+ };
+ 
++static ssize_t exynos_dsi_dcs_transfer(struct mipi_dsi_device *dsi, u8 type,
++				     const void *data, size_t len, u16 flags)
++{
++	const struct mipi_dsi_host_ops *ops = dsi->host->ops;
++	bool is_last;
++	struct mipi_dsi_msg msg = {
++		.channel = dsi->channel,
++		.tx_buf = data,
++		.tx_len = len,
++		.type = type,
++	};
++
++	if (!ops || !ops->transfer)
++		return -ENOSYS;
++
++	msg.flags = flags;
++
++	is_last = ((flags & EXYNOS_DSI_MSG_QUEUE) == 0) || (flags & EXYNOS_DSI_MSG_FORCE_FLUSH);
++	trace_dsi_tx(msg.type, msg.tx_buf, msg.tx_len, is_last, 0);
++	if (dsi->mode_flags & MIPI_DSI_MODE_LPM)
++		msg.flags |= MIPI_DSI_MSG_USE_LPM;
++
++	return ops->transfer(dsi->host, &msg);
++}
++
++int exynos_dcs_write_delay(struct exynos_panel *ctx, const void *data, size_t len,
++			   u32 delay_ms)
++{
++	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
++
++	host_to_dsi(dsi->host)->tx_delay_ms = delay_ms;
++
++	return exynos_dcs_write(ctx, data, len);
++}
++EXPORT_SYMBOL_GPL(exynos_dcs_write_delay);
++
++ssize_t exynos_dsi_dcs_write_buffer(struct mipi_dsi_device *dsi,
++				  const void *data, size_t len, u16 flags)
++{
++	u8 type;
++
++	switch (len) {
++	case 0:
++		/* allow flag only messages to dsim */
++		type = 0;
++		break;
++
++	case 1:
++		type = MIPI_DSI_DCS_SHORT_WRITE;
++		break;
++
++	case 2:
++		type = MIPI_DSI_DCS_SHORT_WRITE_PARAM;
++		break;
++
++	default:
++		type = MIPI_DSI_DCS_LONG_WRITE;
++		break;
++	}
++
++	return exynos_dsi_dcs_transfer(dsi, type, data, len, flags);
++}
++EXPORT_SYMBOL_GPL(exynos_dsi_dcs_write_buffer);
++
++
+ #ifdef CONFIG_DEBUG_FS
+ 
+ static u8 panel_get_cmd_type(const struct exynos_dsi_cmd *cmd)
+@@ -3064,70 +3129,6 @@
+ 	return 0;
+ }
+ 
+-static ssize_t exynos_dsi_dcs_transfer(struct mipi_dsi_device *dsi, u8 type,
+-				     const void *data, size_t len, u16 flags)
+-{
+-	const struct mipi_dsi_host_ops *ops = dsi->host->ops;
+-	bool is_last;
+-	struct mipi_dsi_msg msg = {
+-		.channel = dsi->channel,
+-		.tx_buf = data,
+-		.tx_len = len,
+-		.type = type,
+-	};
+-
+-	if (!ops || !ops->transfer)
+-		return -ENOSYS;
+-
+-	msg.flags = flags;
+-
+-	is_last = ((flags & EXYNOS_DSI_MSG_QUEUE) == 0) || (flags & EXYNOS_DSI_MSG_FORCE_FLUSH);
+-	trace_dsi_tx(msg.type, msg.tx_buf, msg.tx_len, is_last, 0);
+-	if (dsi->mode_flags & MIPI_DSI_MODE_LPM)
+-		msg.flags |= MIPI_DSI_MSG_USE_LPM;
+-
+-	return ops->transfer(dsi->host, &msg);
+-}
+-
+-int exynos_dcs_write_delay(struct exynos_panel *ctx, const void *data, size_t len,
+-			   u32 delay_ms)
+-{
+-	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
+-
+-	host_to_dsi(dsi->host)->tx_delay_ms = delay_ms;
+-
+-	return exynos_dcs_write(ctx, data, len);
+-}
+-EXPORT_SYMBOL_GPL(exynos_dcs_write_delay);
+-
+-ssize_t exynos_dsi_dcs_write_buffer(struct mipi_dsi_device *dsi,
+-				  const void *data, size_t len, u16 flags)
+-{
+-	u8 type;
+-
+-	switch (len) {
+-	case 0:
+-		/* allow flag only messages to dsim */
+-		type = 0;
+-		break;
+-
+-	case 1:
+-		type = MIPI_DSI_DCS_SHORT_WRITE;
+-		break;
+-
+-	case 2:
+-		type = MIPI_DSI_DCS_SHORT_WRITE_PARAM;
+-		break;
+-
+-	default:
+-		type = MIPI_DSI_DCS_LONG_WRITE;
+-		break;
+-	}
+-
+-	return exynos_dsi_dcs_transfer(dsi, type, data, len, flags);
+-}
+-EXPORT_SYMBOL_GPL(exynos_dsi_dcs_write_buffer);
+-
+ static int exynos_dsi_name_show(struct seq_file *m, void *data)
+ {
+ 	struct mipi_dsi_device *dsi = m->private;

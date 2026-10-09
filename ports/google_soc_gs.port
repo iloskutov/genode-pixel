@@ -1,0 +1,12 @@
+LICENSE   := GPLv2
+VERSION   := git
+DOWNLOADS := google_soc_gs.git
+
+#
+# SoC support of the Pixel 7 kernel (google-modules/soc/gs). The drivers of
+# this repository use its headers. The revision is the one of the kernel
+# manifest android-gs-pantah-6.1-android16.
+#
+URL(google_soc_gs) := https://android.googlesource.com/kernel/google-modules/soc/gs
+REV(google_soc_gs) := 057ab18a9cc0e318538b419eafc565a7fbe1d320
+DIR(google_soc_gs) := src/google_soc_gs

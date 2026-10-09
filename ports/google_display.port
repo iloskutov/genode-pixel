@@ -1,0 +1,19 @@
+LICENSE   := GPLv2
+VERSION   := git
+DOWNLOADS := google_display_samsung.git google_display_common.git
+
+#
+# Display stack of the Pixel 7 (exynos-drm with DECON, DPP, DSIM, CAL, and
+# the panel drivers) as used by the framebuffer driver. The revisions are the
+# ones of the kernel manifest android-gs-pantah-6.1-android16.
+#
+URL(google_display_samsung) := https://android.googlesource.com/kernel/google-modules/display/samsung
+REV(google_display_samsung) := 5a7677a080329e38b6cdd4c174bfc97c0fb3c627
+DIR(google_display_samsung) := src/google_display/samsung
+
+URL(google_display_common) := https://android.googlesource.com/kernel/google-modules/display/common
+REV(google_display_common) := ef3e3024e35592dc32bf9d63c81b02b08fc908ab
+DIR(google_display_common) := src/google_display/common
+
+PATCHES   := patches/google_display/0001-panel-dsi-write-without-debugfs.patch
+PATCH_OPT := -p1
