@@ -24,6 +24,7 @@
 #include <base/attached_io_mem_dataspace.h>
 #include <cpu/mmio_access.h>
 #include <power.h>
+#include <timer_session/connection.h>
 
 namespace Driver { struct Acpm; }
 
@@ -300,6 +301,49 @@ struct Driver::Acpm : private Noncopyable
 	};
 
 	Panel_power _panel_power { _powers, *this };
+
+	/*
+	 * Supplies of the touchscreen: LDO25 and LDO26 of the S2MPG12, given
+	 * 5 ms to settle after switching them on
+	 */
+	struct Touch_power : Driver::Power
+	{
+		Acpm &_acpm;
+
+		enum {
+			S2MPG12_L25M_CTRL = 0x44, L25M_EN_MASK = 0x80,
+			S2MPG12_L26M_CTRL = 0x45, L26M_EN_MASK = 0xC0,
+			SETTLE_MS = 5,
+		};
+
+		Touch_power(Powers &powers, Acpm &acpm)
+		:
+			Driver::Power(powers, "touch-power"), _acpm(acpm)
+		{ }
+
+		void _on() override
+		{
+			bool const ok =
+				_acpm._pmic_update(S2MPG12_L25M_CTRL, L25M_EN_MASK,
+				                   L25M_EN_MASK, PMIC_CHANNEL)
+			 && _acpm._pmic_update(S2MPG12_L26M_CTRL, L26M_EN_MASK,
+				                   L26M_EN_MASK, PMIC_CHANNEL);
+			if (!ok)
+				Genode::warning("could not switch on the touchscreen supplies");
+
+			_acpm._timer.msleep(SETTLE_MS);
+		}
+
+		void _off() override
+		{
+			_acpm._pmic_update(S2MPG12_L26M_CTRL, 0, L26M_EN_MASK, PMIC_CHANNEL);
+			_acpm._pmic_update(S2MPG12_L25M_CTRL, 0, L25M_EN_MASK, PMIC_CHANNEL);
+		}
+	};
+
+	Timer::Connection _timer { _env };
+
+	Touch_power _touch_power { _powers, *this };
 
 	Acpm(Genode::Env &env, Powers &powers) : _env(env), _powers(powers)
 	{

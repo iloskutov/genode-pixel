@@ -5,7 +5,7 @@
  * \date   2026-02-08
  *
  * Derived from the following file of the Genode OS framework and extended
- * by the power domains of the GS201 SoC:
+ * by the power domains and clocks of the GS201 SoC:
  *
  *   repos/os/src/driver/platform/main.cc
  */
@@ -21,6 +21,7 @@
 
 #include <base/component.h>
 
+#include <cmu.h>
 #include <pmu.h>
 #include <acpm.h>
 #include <common.h>
@@ -36,6 +37,10 @@ struct Driver::Main
 	                                         &Main::_handle_config };
 	void _handle_config();
 
+	Fixed_clock _osc_clk { _common.devices().clocks(), "oscclk",
+	                       Clock::Rate { 26*1000*1000 } };
+
+	Cmu  _cmu  { _env, _common.devices().clocks(), _osc_clk };
 	Pmu  _pmu  { _env, _common.devices().powers() };
 	Acpm _acpm { _env, _common.devices().powers() };
 

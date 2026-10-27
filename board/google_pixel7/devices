@@ -3,9 +3,18 @@ devices
 + device gpio_far_alive | type: samsung,gs201-gpio
   .
   . GPIO controller of the FAR_ALIVE domain (banks gpa6, gpa7, gpa8,
-  . gpa11), used by the pin driver gs201_pio
+  . gpa11), used by the pin driver gs201_pio. Each pin of these banks has
+  . its own interrupt, numbered as in the device tree plus 32.
   .
   + io_mem | address: 0x180e0000 | size: 0x1000
+  + irq    | number: 84 | . gpa7-0, interrupt of the touchscreen
+
++ device gpio_peric1 | type: samsung,gs201-gpio
+  .
+  . GPIO controller of the PERIC1 block (banks gpp20 to gpp23), used by the
+  . pin driver gs201_pio for the SPI0 bus and the touchscreen's reset
+  .
+  + io_mem | address: 0x10c40000 | size: 0x1000
 
 + device dpu | type: samsung,exynos-decon
   .
@@ -57,4 +66,18 @@ devices
   + irq | number: 282
   + power-domain dpu-power
   + power-domain panel-power
+
++ device spi0 | type: samsung,exynos-spi
+  .
+  . SPI controller of USI0, the bus of the touchscreen
+  .
+  + io_mem | address: 0x10d10000 | size: 0x1000
+  + irq    | number: 722
+  + clock top-peric1-ip
+  + clock top-peric1-noc
+  + clock usi0-mux
+  + clock spi0-ipclk | driver_name: ipclk_spi
+  + clock spi0-pclk  | driver_name: gate_spi_clk
+  + clock usi0-spi-mode
+  + power-domain touch-power
 -
