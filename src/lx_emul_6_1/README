@@ -14,6 +14,12 @@ the structure of 'repos/dde_linux/src'. The files are taken unmodified from
 Genode 25.11, the version the drivers were developed with. Their copyright
 and license are stated in their headers.
 
+The evdev emulation in 'lib/lx_emul/shadow/drivers/input' is an exception:
+'evdev.c' and 'evdev.h' are the version of Genode 26.08, which reports
+touchscreens in the form the GUI stack expects. Only the type of the event
+callback 'evdev_events' in 'evdev.c' is changed to the one of the 6.1
+kernel (no return value, constant events).
+
 All other files of the DDE come from the 'dde_linux' repository: the
 Genode-facing code (C++ sources, lx_kit, the lx_emul API headers) and the
 Linux-facing files that fit both kernels. The import file

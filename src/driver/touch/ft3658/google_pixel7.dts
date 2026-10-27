@@ -1,0 +1,137 @@
+/dts-v1/;
+
+/*
+ * \brief  Device tree of the touchscreen of the Google Pixel 7
+ * \author Ivan Loskutov
+ * \date   2026-10-27
+ *
+ * The tree describes what the touch driver needs: the SPI controller of USI0
+ * with the FocalTech FT3658U touchscreen, the three GPIO banks the driver
+ * uses (chip select, reset, interrupt), and the interrupt controller. The
+ * values are those of the vendor's device tree for the phone
+ * (gs201-panther), with these changes:
+ *
+ * - The SPI controller runs in CPU mode (FIFO) instead of DMA mode, so the
+ *   DMA properties are left out.
+ * - The touchscreen's SPI clock is 6.5 MHz instead of 10 MHz: the controller
+ *   divides its 26 MHz clock by 4, the rate the controller gets without a
+ *   change of its clock.
+ * - The touchscreen's 'focaltech,panel_map' is left out. It names the DRM
+ *   panel for the panel bridge, and without a panel in this component the
+ *   driver would wait for it forever.
+ *
+ * Left out are references that have no counterpart in the driver's Linux
+ * emulation environment: clocks and the USI system registers (both handled
+ * by the platform driver) and pin-control states (the SPI pins are
+ * configured by the pin driver). The supplies of the touchscreen point to
+ * placeholder nodes: the platform driver switches them, but the driver
+ * initializes its power differently when the properties are missing.
+ */
+
+/*
+ * SPDX-License-Identifier: GPL-2.0
+ */
+
+/ {
+	model = "GS201 PANTHER MP based on GS201";
+	#address-cells = <2>;
+	#size-cells = <1>;
+	compatible = "google,GS201 PANTHER", "google,GS201";
+	interrupt-parent = <&gic>;
+
+	/* the SPI driver takes the controller's number from the alias */
+	aliases {
+		spi0 = &spi0;
+	};
+
+	/*
+	 * Placeholders of the LDO25 and LDO26 supplies of the touchscreen,
+	 * disabled so that the touchscreen does not wait for them as suppliers
+	 */
+	touch_avdd: touch-avdd { status = "disabled"; };
+	touch_vdd:  touch-vdd  { status = "disabled"; };
+
+	pinctrl@180E0000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x180e0000 0x1000>;
+
+		/* pin 0: interrupt of the touchscreen */
+		gpa7: gpa7 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 0x34 4>,
+			             <0 0x35 4>,
+			             <0 0x36 4>,
+			             <0 0x37 4>;
+		};
+	};
+
+	pinctrl@10C40000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x10c40000 0x1000>;
+
+		/* pin 3: chip select of SPI0 */
+		gpp20: gpp20 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+
+		/* pin 2: reset line of the touchscreen */
+		gpp23: gpp23 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+	};
+
+	spi0: spi@10D10000 {
+		compatible = "samsung,exynos-spi";
+		reg = <0 0x10d10000 0x1000>;
+		interrupts = <0 0x2b2 4>;
+		num-cs = <1>;
+		cs-gpios = <&gpp20 3 1>;
+		samsung,spi-fifosize = <0x40>;
+		swap-mode = <1>;
+		clock-names = "ipclk_spi", "gate_spi_clk";
+		samsung,usi-offset = <0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		touchscreen@0 {
+			compatible = "focaltech,ts";
+			reg = <0>;
+			spi-max-frequency = <6500000>;
+			avdd-supply = <&touch_avdd>;
+			vdd-supply = <&touch_vdd>;
+			focaltech,reset-gpio = <&gpp23 2 0>;
+			focaltech,irq-gpio = <&gpa7 0 0>;
+			focaltech,max-touch-number = <0x0a>;
+			focaltech,display-coords = <0 0 0x437 0x95f>;
+			focaltech,rx_ch_num = <0x22>;
+			focaltech,tx_ch_num = <0x10>;
+			focaltech,touch_offload_id = <0x70313030>;
+			focaltech,mm2px = [08];
+
+			controller-data {
+				cs-clock-delay = <1>;
+				samsung,spi-chip-select-mode = <1>;
+				samsung,spi-feedback-delay = <0>;
+			};
+		};
+	};
+
+	gic: interrupt-controller@10400000 {
+		compatible = "arm,gic-v3";
+		#interrupt-cells = <3>;
+		interrupt-controller;
+		reg = <0 0x10400000 0x10000>,
+		      <0 0x10440000 0x100000>;
+		interrupts = <1 9 4>;
+	};
+};

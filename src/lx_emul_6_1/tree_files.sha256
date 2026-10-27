@@ -11,7 +11,9 @@ de4684168337320976739817865d2cd543582be13700538772ea23b08fbb7597  include/lx_emu
 e2fe75ecdae5827b9add6221cc64bca29d16169d333e6c13518f73418252e966  lib/lx_emul/shadow/arch/arm64/kernel/cacheinfo.c
 f98ddba3a2b9fe846bce8e12b78df5e97e0f20cf26424affd456d48d3aab8536  lib/lx_emul/shadow/arch/arm64/kernel/cpufeature.c
 13849540b701ea5cf668a55373c4cfa779c4cbe39ead5030b22ddc1e1eb0a488  lib/lx_emul/shadow/arch/arm64/kernel/smp.c
+1d79fa1d3b19288c8ccc2450815852a2b5f0ee6edccb2769097f31125639e780  lib/lx_emul/shadow/drivers/clk/clk-devres.c
 835b88c8ff8ad43255f7ba831339740c3a8ec5782e12326ff870ab5e89fd8f4c  lib/lx_emul/shadow/drivers/clk/clk.c
+8534c6787c68905d5940003ac3c5c2fb1d5719c5089beecca9800dd3be4efb12  lib/lx_emul/shadow/drivers/clk/clkdev.c
 942a33b9d497051496fe6eb19a7f9fbdfb7069e9805678ee03192d9b1cb08eaa  lib/lx_emul/shadow/fs/exec.c
 62c8724c5127d8d22513549a76fe72d21c972e2be8f1b1b45bf02a05fbda8eed  lib/lx_emul/shadow/kernel/exit.c
 a9586fbe030f6a3cc5678ce7ff0e098fe04c9c3761387964f647253317e6572e  lib/lx_emul/shadow/kernel/irq/spurious.c
