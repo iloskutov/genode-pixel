@@ -1,0 +1,88 @@
+#
+# Hardware keys of the Google Pixel 7
+#
+# The driver 'gs201_keys' reports the power and volume keys to 'event_dump',
+# which logs them. The keys are GPIO lines provided by 'gs201_pio'.
+#
+
+assert {[have_board google_pixel7]}
+
+build {
+	core init lib/ld timer
+	server/event_dump
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/keys/gs201
+}
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start event_dump
+  + provides | + service Event
+  + route | + any-service | + parent
+
++ start platform | caps: 150 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+  + config
+    + policy | label_prefix: gs201_pio | info: yes
+      + device gpio_alive
+      + device gpio_far_alive
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start gs201_pio | caps: 150 | ram: 2M
+  + provides
+    + service Pin_state
+    + service Pin_control
+    + service IRQ
+  + config
+    + in power    | bank: gpa10 | index: 0 | irq: edges | pull: up
+    + in vol_up   | bank: gpa8  | index: 5 | irq: edges
+    + in vol_down | bank: gpa10 | index: 1 | irq: edges | pull: up
+    + policy | label: gs201_keys -> power    | pin: power
+    + policy | label: gs201_keys -> vol_up   | pin: vol_up
+    + policy | label: gs201_keys -> vol_down | pin: vol_down
+  + route
+    + service Platform | + child platform
+    + any-service      | + parent
+
++ start gs201_keys
+  + config
+    + key | name: KEY_POWER      | pin: power
+    + key | name: KEY_VOLUMEUP   | pin: vol_up
+    + key | name: KEY_VOLUMEDOWN | pin: vol_down
+  + route
+    + service Pin_state | + child gs201_pio
+    + service IRQ       | + child gs201_pio
+    + service Event     | + child event_dump
+    + any-service       | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever

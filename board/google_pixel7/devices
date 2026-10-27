@@ -1,5 +1,15 @@
 devices
 
++ device gpio_alive | type: samsung,gs201-gpio
+  .
+  . GPIO controller of the ALIVE domain (banks gpa0 to gpa5, gpa9, gpa10),
+  . used by the pin driver gs201_pio. Each pin of these banks has its own
+  . interrupt, numbered as in the device tree plus 32.
+  .
+  + io_mem | address: 0x180d0000 | size: 0x1000
+  + irq    | number: 74 | . gpa10-0, power key
+  + irq    | number: 75 | . gpa10-1, volume-down key
+
 + device gpio_far_alive | type: samsung,gs201-gpio
   .
   . GPIO controller of the FAR_ALIVE domain (banks gpa6, gpa7, gpa8,
@@ -8,6 +18,7 @@ devices
   .
   + io_mem | address: 0x180e0000 | size: 0x1000
   + irq    | number: 84 | . gpa7-0, interrupt of the touchscreen
+  + irq    | number: 93 | . gpa8-5, volume-up key
 
 + device gpio_peric1 | type: samsung,gs201-gpio
   .
