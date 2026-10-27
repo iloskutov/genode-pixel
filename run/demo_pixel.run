@@ -1,0 +1,322 @@
+#
+# Demo of the Genode GUI stack on the Google Pixel 7
+#
+# A copy of os/run/demo.run. The drivers subsystem consists of the drivers
+# of this repository instead of the depot package
+# 'drivers_interactive-<board>': the framebuffer driver shows the GUI
+# server's screen, the touchscreen and the hardware keys are merged into
+# one event stream by 'event_filter'. All components are built from source.
+#
+
+assert {[have_board google_pixel7]}
+
+create_boot_directory
+
+build {
+	core init lib/ld timer
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/framebuffer/exynos
+	driver/touch/ft3658
+	driver/keys/gs201
+	server/event_filter
+	server/report_rom
+	server/rom_filter
+	server/nitpicker
+	server/liquid_framebuffer
+	server/nitlog
+	app/global_keys_handler
+	app/nit_focus
+	app/pointer
+	app/status_bar
+	app/launchpad
+	app/scout
+	test/nitpicker
+	lib/libc
+	lib/libm
+	lib/libpng
+	lib/vfs
+	lib/zlib
+}
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service IO_PORT
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default-route
+  + any-service
+    + parent
+    + any-child
+
++ default | caps: 100 | ram: 1196K
+
++ start timer
+  + provides | + service Timer
+
++ start drivers | caps: 2000 | ram: 160M | managing_system: yes
+  + binary init
+  + route
+    + service ROM | label: config | + parent | label: drivers.config
+    + service Timer               | + child timer
+    + service Capture             | + child nitpicker
+    + service Event               | + child nitpicker
+    + any-service                 | + parent
+
++ start report_rom | ram: 2M
+  + provides
+    + service Report
+    + service ROM
+  + config | verbose: no
+    + policy | label: status_bar -> focus          | report: nitpicker -> focus
+    + policy | label: nitpicker_config -> xray     | report: global_keys_handler -> xray
+    + policy | label: global_keys_handler -> hover | report: nitpicker -> hover
+    + policy | label: nit_focus -> clicked         | report: nitpicker -> clicked
+    + policy | label: nitpicker -> focus           | report: nit_focus -> focus
+
++ start nitpicker_config
+  + binary rom_filter
+  + provides | + service ROM
+  + config
+  | + input xray_enabled | rom: xray | node: xray | + attribute enabled
+  | + output | node: config
+  |   + attribute focus | value: rom
+  |   + inline
+  |   | + report | focus: yes | xray: yes | hover: yes | keystate: yes | clicked: yes
+  |   | + capture
+  |   | + event
+  |   | + domain pointer | layer: 1 | content: client | label: no | origin: pointer
+  |   | + domain panel   | layer: 2 | content: client | label: no | hover:  always
+  |   + if
+  |   | + has_value | input: xray_enabled | value: no
+  |   | + then
+  |   |   + inline
+  |   |     + domain launchpad | layer: 3 | content: client | label: no
+  |   |                        | hover: always | focus: click | ypos: 18
+  |   |                        | height: -18
+  |   |
+  |   |     + domain default   | layer: 3 | content: client | label: no
+  |   |                        | hover: always | focus: click | ypos: 18
+  |   |                        | height: -18
+  |   | + else
+  |   |   + inline
+  |   |     + domain launchpad | layer: 3 | content: tinted | label: yes
+  |   |                        | hover: focused | focus: click | ypos: 18
+  |   |                        | height: -18 | color: #dd0000
+  |   |
+  |   |     + domain default   | layer: 3 | content: tinted | label: yes
+  |   |                        | hover: focused | focus: click | ypos: 18
+  |   |                        | height: -18 | color: #55dd34
+  |   + inline
+  |     + policy | label_prefix: pointer            | domain: pointer
+  |     + policy | label_prefix: status_bar         | domain: panel
+  |     + policy | label_prefix: scout -> launchpad | domain: launchpad
+  |     + default-policy                            | domain: default
+  |
+  |     + global-key KEY_SCROLLLOCK | label: global_keys_handler -> input
+  |     + global-key KEY_F1         | label: global_keys_handler -> input
+  |     + global-key KEY_F2         | label: global_keys_handler -> input
+  + route
+    + service ROM | label: xray | + child report_rom
+    + any-service               | + parent
+
++ start global_keys_handler
+  + config
+  | + bool xray | initial: no
+  |
+  | + press KEY_SCROLLLOCK | bool: xray | change: toggle
+  | + press KEY_F1         | bool: xray | change: on
+  | + release KEY_F1       | bool: xray | change: off
+  | + press KEY_F2         | bool: xray | change: toggle
+  |
+  | + report xray | delay_ms: 125
+  |   + hovered | domain: panel
+  |   + bool xray
+  + route
+    + service Report             | + child report_rom
+    + service ROM | label: hover | + child report_rom
+    + any-service
+      + parent
+      + any-child
+
++ start nitpicker | caps: 120 | ram: 1216K
+  + provides
+    + service Gui
+    + service Capture
+    + service Event
+  + route
+    + service ROM | label: config | + child nitpicker_config
+    + service ROM | label: focus  | + child report_rom
+    + service Report              | + child report_rom
+    + any-service
+      + parent
+      + any-child
+
++ start pointer
+  + config
+
++ start nit_focus
+  + config | + default-policy | focus: yes
+  + route
+    + service ROM | label: clicked | + child report_rom
+    + service Report               | + child report_rom
+    + any-service                  | + parent
+
++ start status_bar
+  + route
+    + service ROM | label: focus | + child report_rom
+    + any-service
+      + parent
+      + any-child
+
++ start scout | caps: 10000 | ram: 80M
+  + config
+    + libc | stdout: /dev/log | stderr: /dev/log
+    + vfs | + dir dev | + log
+-
+}
+
+#
+# Create launchpad configuration
+#
+set launchpad_config_fd [open "bin/launchpad.config" w]
+puts $launchpad_config_fd {
+config
++ launcher testnit   | ram_quota: 768K  | caps: 50
++ launcher scout     | ram_quota: 41M   | caps: 200
++ launcher launchpad | ram_quota: 6M    | caps: 1000 | + configfile launchpad.config
++ launcher nitlog    | ram_quota: 1500K | caps: 100
++ launcher liquid_fb | ram_quota: 9M    | caps: 100  | + config | resize_handle: on
++ launcher nitpicker | ram_quota: 1M    | caps: 100
+  + config | request_input: yes | request_framebuffer: yes
+    + domain default | layer: 3 | conten: client | label: no | focus: click
+    + default-policy | domain: default
+-
+}
+close $launchpad_config_fd
+
+#
+# Drivers subsystem
+#
+set drivers_config_fd [open "bin/drivers.config" w]
+puts $drivers_config_fd {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+  + service Timer
+  + service Capture
+  + service Event
+
++ default | caps: 100 | ram: 1M
+
++ start platform | caps: 150 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+  + config
+    + policy | label_prefix: gs201_pio | info: yes
+      + device gpio_alive
+      + device gpio_far_alive
+      + device gpio_peric1
+    + policy | label_prefix: exynos_fb | info: yes
+      + device dpu
+      + device dsim0
+    + policy | label_prefix: ft3658_touch | info: yes
+      + device spi0
+  + route | + any-service | + parent
+
++ start gs201_pio | caps: 150 | ram: 2M
+  + provides
+    + service Pin_state
+    + service Pin_control
+    + service IRQ
+  + config
+    + out panel_reset  | bank: gpa7  | index: 1 | default: yes
+    + select spi0_clk  | bank: gpp20 | index: 0 | function: 3
+    + select spi0_mosi | bank: gpp20 | index: 1 | function: 3
+    + select spi0_miso | bank: gpp20 | index: 2 | function: 3
+    + out touch_reset  | bank: gpp23 | index: 2 | default: yes
+    + out spi0_cs      | bank: gpp20 | index: 3 | default: yes
+    + in  touch_int    | bank: gpa7  | index: 0 | irq: falling
+    + in  power        | bank: gpa10 | index: 0 | irq: edges | pull: up
+    + in  vol_up       | bank: gpa8  | index: 5 | irq: edges
+    + in  vol_down     | bank: gpa10 | index: 1 | irq: edges | pull: up
+    + policy | label: exynos_fb -> gpa7-1     | pin: panel_reset
+    + policy | label: ft3658_touch -> gpp23-2 | pin: touch_reset
+    + policy | label: ft3658_touch -> gpp20-3 | pin: spi0_cs
+    + policy | label: ft3658_touch -> 84      | pin: touch_int
+    + policy | label: gs201_keys -> power     | pin: power
+    + policy | label: gs201_keys -> vol_up    | pin: vol_up
+    + policy | label: gs201_keys -> vol_down  | pin: vol_down
+  + route
+    + service Platform | + child platform
+    + any-service      | + parent
+
++ start event_filter | caps: 90 | ram: 1280K
+  + provides | + service Event
+  + config
+    + output
+      + touch-click
+        . absolute motion and left click for applications unaware of touch
+        + merge
+          + input touch
+          + input keys
+    + policy | label: touch | input: touch
+    + policy | label: keys  | input: keys
+  + route | + any-service | + parent
+
++ start exynos_fb | caps: 500 | ram: 96M
+  + config | display: on
+  + route
+    + service ROM | label: dtb | + parent | label: exynos_fb-google_pixel7.dtb
+    + service Platform    | + child platform
+    + service Dma         | + child platform
+    + service Pin_state   | + child gs201_pio
+    + service Pin_control | + child gs201_pio
+    + any-service         | + parent
+
++ start ft3658_touch | caps: 300 | ram: 32M
+  + route
+    + service ROM | label: dtb | + parent | label: ft3658_touch-google_pixel7.dtb
+    + service Platform    | + child platform
+    + service Dma         | + child platform
+    + service Pin_state   | + child gs201_pio
+    + service Pin_control | + child gs201_pio
+    + service IRQ         | + child gs201_pio
+    + service Event       | + child event_filter | label: touch
+    + any-service         | + parent
+
++ start gs201_keys
+  + config
+    + key | name: KEY_POWER      | pin: power
+    + key | name: KEY_VOLUMEUP   | pin: vol_up
+    + key | name: KEY_VOLUMEDOWN | pin: vol_down
+  + route
+    + service Pin_state | + child gs201_pio
+    + service IRQ       | + child gs201_pio
+    + service Event     | + child event_filter | label: keys
+    + any-service       | + parent
+-
+}
+close $drivers_config_fd
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+build_boot_image [list {*}[build_artifacts] launchpad.config drivers.config]
+
+run_genode_until forever
