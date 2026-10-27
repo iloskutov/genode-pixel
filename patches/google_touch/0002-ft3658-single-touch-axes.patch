@@ -1,0 +1,19 @@
+ft3658: declare the single-touch axes
+
+The touchscreen declares only the multi-touch axes ABS_MT_POSITION_X/Y.
+input_mt_init_slots() copies them to ABS_X/Y, but the driver calls it
+before the multi-touch axes are set. Genode's evdev emulation classifies
+an input device without ABS_X as one without motion and drops all touch
+positions. Declare ABS_X/Y with the range of the multi-touch axes.
+
+--- a/src/google_touch/focaltech/ft3658/focaltech_core.c
++++ b/src/google_touch/focaltech/ft3658/focaltech_core.c
+@@ -2046,6 +2046,8 @@
+ #endif
+     input_set_abs_params(input_dev, ABS_MT_POSITION_X, pdata->x_min, pdata->x_max, 0, 0);
+     input_set_abs_params(input_dev, ABS_MT_POSITION_Y, pdata->y_min, pdata->y_max, 0, 0);
++    input_set_abs_params(input_dev, ABS_X, pdata->x_min, pdata->x_max, 0, 0);
++    input_set_abs_params(input_dev, ABS_Y, pdata->y_min, pdata->y_max, 0, 0);
+     input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR, 0, 0x3F, 0, 0);
+     input_set_abs_params(input_dev, ABS_MT_TOUCH_MINOR, 0, 0x3F, 0, 0);
+ #if FTS_REPORT_PRESSURE_EN

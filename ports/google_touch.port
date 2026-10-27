@@ -1,0 +1,20 @@
+LICENSE   := GPLv2
+VERSION   := git
+DOWNLOADS := google_touch_focaltech.git google_touch_common.git
+
+#
+# Touchscreen of the Pixel 7 (FocalTech FT3658U over SPI) as used by the touch
+# driver. The revisions are the ones of the kernel manifest
+# android-gs-pantah-6.1-android16.
+#
+URL(google_touch_focaltech) := https://android.googlesource.com/kernel/google-modules/touch/focaltech_touch
+REV(google_touch_focaltech) := fb3df485d8bbf55b6c4adac5b9a341625d8525ba
+DIR(google_touch_focaltech) := src/google_touch/focaltech
+
+URL(google_touch_common) := https://android.googlesource.com/kernel/google-modules/touch/common
+REV(google_touch_common) := d154476fbdeebd549708cfe03dee5db052f26ca6
+DIR(google_touch_common) := src/google_touch/common
+
+PATCHES   := patches/google_touch/0001-ft3658-no-firmware-upgrade-no-selftest.patch \
+             patches/google_touch/0002-ft3658-single-touch-axes.patch
+PATCH_OPT := -p1

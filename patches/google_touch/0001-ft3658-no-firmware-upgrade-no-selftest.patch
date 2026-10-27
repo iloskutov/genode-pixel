@@ -1,0 +1,26 @@
+ft3658: no automatic firmware upgrade, no self-test module
+
+The driver must never flash the touch controller: the automatic upgrade
+compares the firmware of the controller with a built-in image and writes
+the image on a mismatch. The self-test module (sysfs) is not used either.
+
+--- a/src/google_touch/focaltech/ft3658/focaltech_config.h	2026-09-30 10:26:42.111707338 +0200
++++ b/src/google_touch/focaltech/ft3658/focaltech_config.h	2026-09-30 10:26:42.112759221 +0200
+@@ -258,7 +258,7 @@
+  * Production test enable
+  * 1: enable, 0:disable(default)
+  */
+-#define FTS_TEST_EN                             1
++#define FTS_TEST_EN                             0
+ 
+ /*
+  * Pinctrl enable
+@@ -279,7 +279,7 @@
+ /*
+  * auto upgrade
+  */
+-#define FTS_AUTO_UPGRADE_EN                     1
++#define FTS_AUTO_UPGRADE_EN                     0
+ 
+ /*
+  * auto upgrade for lcd cfg
