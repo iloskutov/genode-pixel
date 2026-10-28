@@ -60,6 +60,8 @@ struct gs201_bank
 	unsigned           gic_irq[PINS_PER_BANK]; /* GIC INTID per pin, 0 = none */
 	bool               level[PINS_PER_BANK];       /* level-triggered consumer */
 	bool               ack_pending[PINS_PER_BANK]; /* level: ack at unmask */
+	bool               driven[PINS_PER_BANK];      /* output set by the driver */
+	bool               value[PINS_PER_BANK];       /* level it was set to */
 };
 
 
@@ -74,16 +76,30 @@ static void gs201_pin_name(struct gpio_chip *chip, unsigned offset,
 
 static void gs201_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 {
+	struct gs201_bank *bank = gpiochip_get_data(chip);
 	char name[16];
 	gs201_pin_name(chip, offset, name, sizeof(name));
 
 	lx_emul_pin_control(name, value);
+
+	bank->driven[offset] = true;
+	bank->value[offset]  = !!value;
 }
 
 
+/*
+ * An output that the driver drives reads back the level it was set to:
+ * sensing it would yield its Pin_control session and leave the pin
+ * floating. The WiFi driver reads its reset lines right after setting them.
+ */
 static int gs201_gpio_get(struct gpio_chip *chip, unsigned offset)
 {
+	struct gs201_bank *bank = gpiochip_get_data(chip);
 	char name[16];
+
+	if (bank->driven[offset])
+		return bank->value[offset];
+
 	gs201_pin_name(chip, offset, name, sizeof(name));
 
 	return lx_emul_pin_sense(name);
@@ -100,6 +116,10 @@ static int gs201_gpio_direction_output(struct gpio_chip *chip,
 
 static int gs201_gpio_direction_input(struct gpio_chip *chip, unsigned offset)
 {
+	struct gs201_bank *bank = gpiochip_get_data(chip);
+
+	/* the next read senses the pin */
+	bank->driven[offset] = false;
 	return 0;
 }
 
