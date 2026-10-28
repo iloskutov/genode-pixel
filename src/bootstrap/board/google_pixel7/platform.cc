@@ -27,6 +27,35 @@ extern "C" void   pixel7_sanitize_cpu_state();
 extern "C" void * _pixel7_start_secondary;
 
 
+/*
+ * Release the PHY of PCIe channel 1 (WiFi) from its isolation
+ *
+ * The isolation bit is in a register of the power-management unit that only
+ * the secure monitor may write. Its call SMC_CMD_PRIV_REG reads (option 0)
+ * and writes (option 1) such a register. The vendor's PCIe driver does it
+ * when it powers the link up, which the WiFi driver cannot do from user
+ * level.
+ */
+static void release_pcie1_phy_isolation()
+{
+	enum : unsigned {
+		SMC_CMD_PRIV_REG  = 0x82000504,
+		PMU_PCIE1_PHY_ISO = 0x18063ec4,
+		PRIV_REG_READ     = 0,
+		PRIV_REG_WRITE    = 1,
+	};
+
+	using Smc = Hw::Psci_smc_functor;
+
+	int const value = Smc::call(SMC_CMD_PRIV_REG, PMU_PCIE1_PHY_ISO,
+	                            PRIV_REG_READ, 0);
+
+	if (Smc::call(SMC_CMD_PRIV_REG, PMU_PCIE1_PHY_ISO, PRIV_REG_WRITE,
+	              (unsigned)value | 1))
+		Genode::error("failed to release the isolation of the PCIe1 PHY");
+}
+
+
 Bootstrap::Platform::Board::Board()
 :
 	early_ram_regions(
@@ -58,6 +87,8 @@ Bootstrap::Platform::Board::Board()
 	pixel7_sanitize_cpu_state();
 
 	Watchdog::stop();
+
+	release_pcie1_phy_isolation();
 }
 
 
