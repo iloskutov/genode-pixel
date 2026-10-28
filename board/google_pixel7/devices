@@ -27,6 +27,14 @@ devices
   .
   + io_mem | address: 0x10c40000 | size: 0x1000
 
++ device gpio_hsi2 | type: samsung,gs201-gpio
+  .
+  . GPIO controller of the HSI2 block (banks gph2 and gph4), used by the
+  . pin driver gs201_pio for the reset line of PCIe channel 1 and the
+  . power line of the WiFi chip
+  .
+  + io_mem | address: 0x14440000 | size: 0x1000
+
 + device dpu | type: samsung,exynos-decon
   .
   . Display processing unit: DECON0 and all DPP channels, as described
@@ -107,4 +115,33 @@ devices
   + clock ufs-embd | driver_name: GATE_UFS_EMBD
   + clock ufs-embd | driver_name: UFS_EMBD
   + clock ufs-iocc
+
++ device pcie1 | type: samsung,exynos-pcie-rc
+  .
+  . PCIe channel 1 of the HSI2 block (pcie@14520000), the link to the WiFi
+  . chip. The shareability bits of the channel in SYSREG_HSI2 are set by
+  . the clock 'pcie1-iocc', the driver does not map the system registers.
+  .
+  + io_mem | address: 0x14520000 | size: 0x2000   | . ELBI
+  + io_mem | address: 0x14560000 | size: 0xd000   | . UDBG
+  + io_mem | address: 0x14550000 | size: 0x2000   | . PHY
+  + io_mem | address: 0x14800000 | size: 0x301000 | . DBI
+  + io_mem | address: 0x14540000 | size: 0x1000   | . PCS
+  + io_mem | address: 0x60ffe000 | size: 0x2000   | . configuration space
+  + io_mem | address: 0x14500000 | size: 0x1000   | . I/A
+  + io_mem | address: 0x60000000 | size: 0xff0000 | . memory window
+  + irq    | number: 460 | . ELBI
+  + irq    | number: 461 | . MSI 0-4
+  + irq    | number: 462
+  + irq    | number: 463
+  + irq    | number: 464
+  + irq    | number: 465
+  + clock top-hsi2-pcie
+  + clock hsi2-pcie-mux
+  + clock pcie1-dbi-aclk
+  + clock pcie1-mstr-aclk
+  + clock pcie1-slv-aclk
+  + clock pcie1-drv-apb
+  + clock pcie1-phy-apb
+  + clock pcie1-iocc
 -

@@ -7,7 +7,8 @@
  * GS201 (cmucal-sfr.c) and its device tree. All clocks are fed by the
  * 26 MHz oscillator. Only the clocks of the drivers of this repository are
  * described: the bus clocks of the PERIC1 block, the USI0 serial interface
- * in SPI mode (touchscreen), and the UFS host controller.
+ * in SPI mode (touchscreen), the UFS host controller, and PCIe channel 1
+ * (WiFi).
  */
 
 /*
@@ -147,6 +148,7 @@ struct Driver::Cmu : private Noncopyable
 	enum : addr_t {
 		CMU_TOP_BASE       = 0x1e080000,
 		CMU_PERIC1_BASE    = 0x10c00000,
+		CMU_HSI2_BASE      = 0x14400000,
 		CMU_SIZE           = 0x4000,
 		SYSREG_PERIC1_BASE = 0x10c21000,
 		SYSREG_HSI2_BASE   = 0x14420000,
@@ -161,16 +163,29 @@ struct Driver::Cmu : private Noncopyable
 		SPI0_IPCLK_OFFSET = 0x2030,
 		SPI0_PCLK_OFFSET  = 0x2034,
 
+		/* CMU_TOP: gate of the clock that feeds the PCIe part of HSI2 */
+		TOP_HSI2_PCIE_OFFSET = 0x20c8,
+
+		/* CMU_HSI2: PCIe user multiplexer and the gates of PCIe channel 1 */
+		HSI2_PCIE_MUX_OFFSET   = 0x0620,
+		PCIE1_DBI_ACLK_OFFSET  = 0x2050,
+		PCIE1_MSTR_ACLK_OFFSET = 0x2054,
+		PCIE1_SLV_ACLK_OFFSET  = 0x2058,
+		PCIE1_DRV_APB_OFFSET   = 0x205c,
+		PCIE1_PHY_APB_OFFSET   = 0x2074,
+
 		/* SYSREG_PERIC1: protocol of USI0 */
 		USI0_SW_CONF_OFFSET = 0x0,
 
-		/* SYSREG_HSI2: I/O coherency of the UFS host controller */
-		UFS_IOCC_OFFSET = 0x710,
-		UFS_IOCC_MASK   = 0x3,
+		/* SYSREG_HSI2: I/O coherency of the UFS host and of PCIe channel 1 */
+		UFS_IOCC_OFFSET   = 0x710,
+		PCIE1_IOCC_OFFSET = 0x730,
+		IOCC_MASK         = 0x3,
 	};
 
 	Attached_mmio<0> _cmu_top       { _env, {(char *)CMU_TOP_BASE,       CMU_SIZE} };
 	Attached_mmio<0> _cmu_peric1    { _env, {(char *)CMU_PERIC1_BASE,    CMU_SIZE} };
+	Attached_mmio<0> _cmu_hsi2      { _env, {(char *)CMU_HSI2_BASE,      CMU_SIZE} };
 	Attached_mmio<0> _sysreg_peric1 { _env, {(char *)SYSREG_PERIC1_BASE, SYSREG_SIZE} };
 	Attached_mmio<0> _sysreg_hsi2   { _env, {(char *)SYSREG_HSI2_BASE,   SYSREG_SIZE} };
 
@@ -201,7 +216,32 @@ struct Driver::Cmu : private Noncopyable
 
 	Sysreg_bits _ufs_iocc { _clocks, "ufs-iocc",
 	                        _sysreg_hsi2.range_at(UFS_IOCC_OFFSET),
-	                        UFS_IOCC_MASK, UFS_IOCC_MASK };
+	                        IOCC_MASK, IOCC_MASK };
+
+	/*
+	 * PCIe channel 1, the link to the WiFi chip. The vendor's driver does not
+	 * manage these clocks (its device tree lists none), they are enabled when
+	 * the device is acquired. The coherency bits serve the 'dma-coherent'
+	 * device-tree property, as for the UFS host.
+	 */
+	Gate _top_hsi2_pcie  { _clocks, "top-hsi2-pcie",   _osc_clk,
+	                       _cmu_top.range_at(TOP_HSI2_PCIE_OFFSET) };
+	Mux  _hsi2_pcie_mux  { _clocks, "hsi2-pcie-mux",
+	                       _cmu_hsi2.range_at(HSI2_PCIE_MUX_OFFSET) };
+	Gate _pcie1_dbi_aclk  { _clocks, "pcie1-dbi-aclk",  _osc_clk,
+	                        _cmu_hsi2.range_at(PCIE1_DBI_ACLK_OFFSET) };
+	Gate _pcie1_mstr_aclk { _clocks, "pcie1-mstr-aclk", _osc_clk,
+	                        _cmu_hsi2.range_at(PCIE1_MSTR_ACLK_OFFSET) };
+	Gate _pcie1_slv_aclk  { _clocks, "pcie1-slv-aclk",  _osc_clk,
+	                        _cmu_hsi2.range_at(PCIE1_SLV_ACLK_OFFSET) };
+	Gate _pcie1_drv_apb   { _clocks, "pcie1-drv-apb",   _osc_clk,
+	                        _cmu_hsi2.range_at(PCIE1_DRV_APB_OFFSET) };
+	Gate _pcie1_phy_apb   { _clocks, "pcie1-phy-apb",   _osc_clk,
+	                        _cmu_hsi2.range_at(PCIE1_PHY_APB_OFFSET) };
+
+	Sysreg_bits _pcie1_iocc { _clocks, "pcie1-iocc",
+	                          _sysreg_hsi2.range_at(PCIE1_IOCC_OFFSET),
+	                          IOCC_MASK, IOCC_MASK };
 
 	Cmu(Genode::Env &env, Clocks &clocks, Clock &osc_clk)
 	:
