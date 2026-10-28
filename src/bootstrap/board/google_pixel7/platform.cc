@@ -28,31 +28,30 @@ extern "C" void * _pixel7_start_secondary;
 
 
 /*
- * Release the PHY of PCIe channel 1 (WiFi) from its isolation
+ * Release a PHY from its isolation
  *
- * The isolation bit is in a register of the power-management unit that only
- * the secure monitor may write. Its call SMC_CMD_PRIV_REG reads (option 0)
- * and writes (option 1) such a register. The vendor's PCIe driver does it
- * when it powers the link up, which the WiFi driver cannot do from user
- * level.
+ * The isolation bit (bit 0) is in a register of the power-management unit
+ * that only the secure monitor may write. Its call SMC_CMD_PRIV_REG reads
+ * (option 0) and writes (option 1) such a register. The vendors' PHY
+ * drivers do it when they power a PHY up, which a driver cannot do from
+ * user level. The isolation is never set again.
  */
-static void release_pcie1_phy_isolation()
+static void release_phy_isolation(unsigned pmu_register, char const *name)
 {
 	enum : unsigned {
-		SMC_CMD_PRIV_REG  = 0x82000504,
-		PMU_PCIE1_PHY_ISO = 0x18063ec4,
-		PRIV_REG_READ     = 0,
-		PRIV_REG_WRITE    = 1,
+		SMC_CMD_PRIV_REG = 0x82000504,
+		PRIV_REG_READ    = 0,
+		PRIV_REG_WRITE   = 1,
 	};
 
 	using Smc = Hw::Psci_smc_functor;
 
-	int const value = Smc::call(SMC_CMD_PRIV_REG, PMU_PCIE1_PHY_ISO,
+	int const value = Smc::call(SMC_CMD_PRIV_REG, pmu_register,
 	                            PRIV_REG_READ, 0);
 
-	if (Smc::call(SMC_CMD_PRIV_REG, PMU_PCIE1_PHY_ISO, PRIV_REG_WRITE,
+	if (Smc::call(SMC_CMD_PRIV_REG, pmu_register, PRIV_REG_WRITE,
 	              (unsigned)value | 1))
-		Genode::error("failed to release the isolation of the PCIe1 PHY");
+		Genode::error("failed to release the isolation of the ", name, " PHY");
 }
 
 
@@ -88,7 +87,10 @@ Bootstrap::Platform::Board::Board()
 
 	Watchdog::stop();
 
-	release_pcie1_phy_isolation();
+	/* PMU registers of the vendor's device tree (pmu_offset of the PHYs) */
+	release_phy_isolation(0x18063ec4, "PCIe1");   /* WiFi */
+	release_phy_isolation(0x18063eb0, "USB");
+	release_phy_isolation(0x18063eb4, "USB DP");
 }
 
 
