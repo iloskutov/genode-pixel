@@ -1,0 +1,35 @@
+USB gadget driver for the Google Pixel 7
+
+The driver 'exynos_usb_gadget' makes the phone a USB device. It is a port
+of Linux' DWC3 controller driver in device mode with the UDC core and the
+composite framework, the vendor's USB PHY driver (with the USBDP combo PHY
+for SuperSpeed), and a slim glue with the vendor's register setup of the
+controller. Its clients are the functions of the device: each one has a
+Usb_gadget session (include/usb_gadget_session), describes itself with
+descriptors of function-local numbers (include/usb_gadget/descriptor.h),
+and moves data with packets. The driver registers the device once every
+function listed in its config is described:
+
+! + config | vendor_id: 0x1d6b | product_id: 0x0104 | manufacturer: Genode
+!          | product: Pixel 7 | serial: 0001 | max_power_ma: 100
+!   + function | label: echo
+
+A function is matched by the last element of its session label. Before
+the kernel starts, the driver closes the USB switch of the MAX77759's
+Type-C controller and reads the cable orientation via an I2c session
+(bus address 0x25, writes of 2 bytes). The orientation is read once, a
+cable plugged in or flipped later keeps the SuperSpeed lanes of the start.
+The isolation of the PHYs, which only the secure monitor controls, is
+released by bootstrap.
+It needs the ports 'pixel_linux' and 'google_soc_gs'.
+
+The logic of include/usb_gadget has host tests:
+
+! make -C repos/pixel/src/test/usb_gadget_host
+
+The scenario 'run/usb_gadget_pixel' runs the function
+'test-usb_gadget_echo', a serial port that echoes every byte. With the
+phone booted, the PC checks the echo via the port's USB IDs:
+
+! make run/usb_gadget_pixel KERNEL=hw BOARD=google_pixel7
+! repos/pixel/tool/usb_echo_check

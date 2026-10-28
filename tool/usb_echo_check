@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+#
+# \brief  PC side of the USB gadget test run/usb_gadget_pixel
+# \author Ivan Loskutov
+# \date   2026-10-28
+#
+# SPDX-License-Identifier: MIT
+#
+# Waits for the serial port (Linux: /dev/ttyACM*) of the phone's USB gadget
+# with the given USB IDs, sends random data of several sizes, and compares
+# what the phone echoes. Exit status 0 if every check passed. Standard
+# library only, Linux host.
+#
+#   repos/pixel/tool/usb_echo_check [--vid 1d6b] [--pid 0104] [--timeout 120]
+#
+
+import argparse
+import glob
+import os
+import random
+import select
+import sys
+import termios
+import time
+import tty
+
+SIZES = [1, 64, 511, 512, 513, 1024, 4096, 65536]
+
+
+def read_attr(path):
+    try:
+        with open(path) as f:
+            return f.read().strip().lower()
+    except OSError:
+        return None
+
+
+def find_device(vid, pid):
+    """Return the ttyACM device of the USB device vid:pid, if present"""
+    for entry in sorted(glob.glob('/sys/class/tty/ttyACM*')):
+        d = os.path.realpath(os.path.join(entry, 'device'))
+        for _ in range(4):
+            if os.path.exists(os.path.join(d, 'idVendor')):
+                if (read_attr(os.path.join(d, 'idVendor')) == vid and
+                        read_attr(os.path.join(d, 'idProduct')) == pid):
+                    return '/dev/' + os.path.basename(entry)
+                break
+            d = os.path.dirname(d)
+    return None
+
+
+def wait_for(cond, timeout):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        result = cond()
+        if result:
+            return result
+        time.sleep(0.2)
+    return None
+
+
+def open_raw(path):
+    for _ in range(25):
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+            break
+        except OSError:
+            time.sleep(0.2)
+    else:
+        raise OSError('cannot open ' + path)
+    tty.setraw(fd)
+    attrs = termios.tcgetattr(fd)
+    attrs[2] |= termios.CLOCAL
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    termios.tcflush(fd, termios.TCIOFLUSH)
+    return fd
+
+
+def echo(fd, size, seed, timeout=10.0):
+    """Send 'size' random bytes, return None if they come back unchanged"""
+    data = random.Random(seed).randbytes(size)
+    sent, got = 0, bytearray()
+    end = time.monotonic() + timeout
+    while len(got) < size:
+        left = end - time.monotonic()
+        if left <= 0:
+            return 'timeout after %d of %d bytes back' % (len(got), size)
+        wr = [fd] if sent < size else []
+        r, w, _ = select.select([fd], wr, [], left)
+        if w:
+            try:
+                sent += os.write(fd, data[sent:sent + 4096])
+            except BlockingIOError:
+                pass
+        if r:
+            try:
+                got += os.read(fd, 65536)
+            except BlockingIOError:
+                pass
+    if bytes(got[:size]) != data:
+        first = next(i for i in range(size) if got[i] != data[i])
+        return 'mismatch at byte %d' % first
+    return None
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--vid', default='1d6b')
+    ap.add_argument('--pid', default='0104')
+    ap.add_argument('--timeout', type=float, default=120)
+    a = ap.parse_args()
+
+    vid, pid = a.vid.lower(), a.pid.lower()
+
+    path = wait_for(lambda: find_device(vid, pid), a.timeout)
+    if not path:
+        print('FAIL no device %s:%s' % (vid, pid), flush=True)
+        return 1
+    print('device %s' % path, flush=True)
+
+    fd = open_raw(path)
+    ok = True
+    try:
+        for i, size in enumerate(SIZES):
+            err = echo(fd, size, seed=i)
+            print(('FAIL echo %d: %s' % (size, err)) if err else
+                  ('PASS echo %d' % size), flush=True)
+            ok = ok and not err
+    finally:
+        os.close(fd)
+
+    print('PASS all' if ok else 'FAIL', flush=True)
+    return 0 if ok else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

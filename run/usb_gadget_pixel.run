@@ -1,0 +1,115 @@
+#
+# USB gadget driver for the Google Pixel 7
+#
+# The driver 'exynos_usb_gadget' makes the phone a USB device with one
+# function, 'test-usb_gadget_echo', a CDC ACM serial port that echoes every
+# byte. On the PC, the tool 'repos/pixel/tool/usb_echo_check' finds the
+# port (Linux: /dev/ttyACM*) by the USB IDs 1d6b:0104 and checks the echo
+# of several sizes. The driver closes the USB switch of the Type-C
+# controller and reads the cable orientation via 'gs201_i2c'. The power
+# and clocks of the controller are provided by 'gs201_platform'.
+#
+#   make run/usb_gadget_pixel KERNEL=hw BOARD=google_pixel7
+#   repos/pixel/tool/usb_echo_check     (on the PC, after booting)
+#
+
+assert {[have_board google_pixel7]}
+
+build {
+	core init lib/ld timer
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/i2c/gs201
+	driver/usb_gadget/exynos
+	test/usb_gadget_echo
+}
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start platform | caps: 150 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+  + config
+    + policy | label_prefix: gs201_pio | info: yes
+      + device gpio_peric1
+    + policy | label_prefix: gs201_i2c | info: yes
+      + device hsi2c13
+    + policy | label_prefix: exynos_usb_gadget | info: yes
+      + device usb
+      + device usb_phy
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start gs201_pio | caps: 150 | ram: 2M
+  + provides
+    + service Pin_state
+    + service Pin_control
+    + service IRQ
+  + config
+    + select hsi2c13_scl | bank: gpp25 | index: 0 | function: 2
+    + select hsi2c13_sda | bank: gpp25 | index: 1 | function: 2
+  + route
+    + service Platform | + child platform
+    + any-service      | + parent
+
++ start gs201_i2c | ram: 2M
+  + provides | + service I2c
+  + config | bus_speed_hz: 400000
+    + allow  | bus_address: 0x25
+      . the Type-C controller of the MAX77759
+    + policy | label_prefix: exynos_usb_gadget | bus_address: 0x25 | max_write: 2
+  + route
+    + service Platform | + child platform
+    + service Timer    | + child timer
+    + any-service      | + parent
+
++ start exynos_usb_gadget | caps: 300 | ram: 32M
+  + provides | + service Usb_gadget
+  + config | vendor_id:    0x1d6b
+           | product_id:   0x0104
+           | manufacturer: Genode
+           | product:      Pixel 7
+           | serial:       0001
+           | max_power_ma: 100
+    + function | label: echo
+  + route
+    + service ROM | label: dtb | + parent | label: exynos_usb_gadget-google_pixel7.dtb
+    + service Platform | + child platform
+    + service Dma      | + child platform
+    + service I2c      | + child gs201_i2c
+    + service Timer    | + child timer
+    + any-service      | + parent
+
++ start test-usb_gadget_echo | ram: 2M
+  + route
+    + service Usb_gadget | + child exynos_usb_gadget
+    + any-service        | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
