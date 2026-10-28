@@ -1,0 +1,44 @@
+dhd_pcie: wait for the first function-level reset of the WiFi chip
+
+After the first reset, the chip stays in reset (its configuration space
+reads 0xffffffff) for some 50 msec, longer than the 8 msec the driver
+polls the reset status, and an access of the chip in reset stalls the
+bus. The status is polled every 5 msec, for up to 1 sec, and not logged
+at each poll.
+
+The reset status is never cleared at the first reset, so the driver
+returned without restoring the configuration space. The command register
+stayed cleared, i.e., the memory space disabled, and every following
+read of a BAR returned 0xffffffff. Restore it in this case too.
+
+--- a/src/bcmdhd_wlan/dhd_pcie.c
++++ b/src/bcmdhd_wlan/dhd_pcie.c
+@@ -8503,10 +8503,15 @@
+ 		"is cleared\n",	PCIE_SSRESET_STATUS_BIT, PCIE_CFG_SUBSYSTEM_CONTROL));
+ 	do {
+ 		val = OSL_PCI_READ_CONFIG(bus->osh, PCIE_CFG_SUBSYSTEM_CONTROL, sizeof(val));
+-		DHD_PRINT(("read_config: reg=0x%x read val=0x%x\n",
++		DHD_INFO(("read_config: reg=0x%x read val=0x%x\n",
+ 			PCIE_CFG_SUBSYSTEM_CONTROL, val));
+ 		val = val & (1 << PCIE_SSRESET_STATUS_BIT);
+-		OSL_DELAY(DHD_SSRESET_STATUS_RETRY_DELAY);
++		/*
++		 * The chip stays in reset for some 50 msec after the first reset,
++		 * longer than the 8 msec of the original poll. An access of the
++		 * chip in reset stalls the bus.
++		 */
++		CAN_SLEEP() ? OSL_SLEEP(5) : OSL_DELAY(5 * USEC_PER_MSEC);
+ 	} while (val && (retry++ < DHD_SSRESET_STATUS_RETRIES));
+ 
+ 	if (val) {
+@@ -8517,6 +8522,10 @@
+ 			bus->flr_force_fail = FALSE;
+ 			DHD_PRINT(("%s cleared flr_force_fail flag\n", __FUNCTION__));
+ 		}
++		/* Restore pcie config space even on FLR failure to keep
++		 * memory space enabled for subsequent BAR MMIO access.
++		 */
++		DHD_PCIE_CONFIG_RESTORE(bus);
+ 		return BCME_DONGLE_DOWN;
+ 	}
+ 

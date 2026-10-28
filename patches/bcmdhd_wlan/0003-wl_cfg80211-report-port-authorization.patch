@@ -1,0 +1,59 @@
+wl_cfg80211: report the port authorization to Genode's uplink
+
+Genode's WiFi driver creates its uplink after the 4-way handshake, see
+'wifi_port_authorized' in uplink.c of the driver. After the authorization,
+power save is switched off, as the host does not poll for buffered
+frames, and the rate on 5 GHz is fixed to 54 Mbit/s OFDM: the access
+point did not acknowledge any data frame at the HE rates the firmware
+selected on 5 GHz.
+
+--- a/src/bcmdhd_wlan/wl_cfg80211.c
++++ b/src/bcmdhd_wlan/wl_cfg80211.c
+@@ -12209,6 +12209,9 @@
+ 	return 0;
+ }
+ 
++/* implemented by the uplink back end of Genode's WiFi driver */
++extern void wifi_port_authorized(bool authorized);
++
+ /* Implementation for post SCB authorize */
+ static void
+ wl_cfg80211_post_scb_auth(struct bcm_cfg80211 *cfg, struct net_device *dev)
+@@ -12216,6 +12219,8 @@
+ #ifdef WBTEXT
+ 	dhd_pub_t *dhdp = (dhd_pub_t *)(cfg->pub);
+ #endif /* WBTEXT */
++	s32 pm = PM_OFF;
++	s32 chanspec = 0;
+ 
+ 	LOG_TS(cfg, authorize_cmplt);
+ 	CLR_TS(cfg, authorize_start);
+@@ -12237,6 +12242,20 @@
+ 	/* Apply per sta connection settings based on current suspend state */
+ 	wl_apply_per_sta_conn_suspend_settings(cfg, dev, cfg->soft_suspend);
+ #endif /* OEM_ANDROID */
++
++	/* no power save, the host does not poll for buffered frames */
++	if (wldev_ioctl_set(dev, WLC_SET_PM, &pm, sizeof(pm)))
++		WL_ERR(("WLC_SET_PM %d failed\n", pm));
++
++	/* fixed OFDM rate of 54 Mbit/s on 5 GHz */
++	if (!wldev_iovar_getint(dev, "chanspec", &chanspec) &&
++		CHSPEC_IS5G(chanspec)) {
++		if (wldev_iovar_setint(dev, "nrate",
++			108 | WL_RSPEC_BW_20MHZ | WL_RSPEC_OVERRIDE_MODE))
++			WL_ERR(("setting the 5 GHz rate failed\n"));
++	}
++
++	wifi_port_authorized(true);
+ }
+ 
+ /* Currently adding support only for authorize/de-authorize flag
+@@ -12293,6 +12312,7 @@
+ 		wl_clr_drv_status(cfg, AUTHORIZED, dev);
+ 		CLR_TS(cfg, authorize_start);
+ 		CLR_TS(cfg, conn_start);
++		wifi_port_authorized(false);
+ 		return err;
+ 	}
+ 

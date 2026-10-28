@@ -10,3 +10,6 @@ DOWNLOADS := google_soc_gs.git
 URL(google_soc_gs) := https://android.googlesource.com/kernel/google-modules/soc/gs
 REV(google_soc_gs) := 057ab18a9cc0e318538b419eafc565a7fbe1d320
 DIR(google_soc_gs) := src/google_soc_gs
+
+PATCHES   := patches/google_soc_gs/0001-pcie-exynos-rc-wifi-channel.patch
+PATCH_OPT := -p1

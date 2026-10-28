@@ -1,0 +1,40 @@
+dhd_linux: initialize the DPC tasklets again when DPC is enabled
+
+dhd_dpc_kill() kills the tasklets of the deferred procedure call when the
+bus goes down. A killed tasklet is not scheduled again, so the responses
+of the firmware were never processed after the bus came up again.
+Initialize the tasklets when DPC processing is enabled.
+
+--- a/src/bcmdhd_wlan/dhd_linux.c
++++ b/src/bcmdhd_wlan/dhd_linux.c
+@@ -4910,13 +4910,20 @@
+ #ifdef BCMPCIE
+ void dhd_dpc_enable(dhd_pub_t *dhdp)
+ {
+-#if defined(DHD_LB_RXP) || defined(DHD_LB_TXP)
+ 	dhd_info_t *dhd;
+ 
+ 	if (!dhdp || !dhdp->info)
+ 		return;
+ 	dhd = dhdp->info;
+-#endif /* DHD_LB_RXP || DHD_LB_TXP */
++
++	/*
++	 * Re-initialize the DPC tasklet after dhd_dpc_kill() permanently
++	 * disabled it via tasklet_kill().  Without this, tasklet_schedule()
++	 * silently fails and firmware responses are never processed.
++	 */
++	if (dhd->thr_dpc_ctl.thr_pid < 0) {
++		tasklet_init(&dhd->tasklet, dhd_dpc, (ulong)dhd);
++	}
+ 
+ #ifdef DHD_LB_RXP
+ 	__skb_queue_head_init(&dhd->rx_pend_queue);
+@@ -4925,6 +4932,7 @@
+ 
+ #ifdef DHD_LB_TXP
+ 	skb_queue_head_init(&dhd->tx_pend_queue);
++	tasklet_init(&dhd->tx_tasklet, dhd_lb_tx_handler, (ulong)dhd);
+ #endif /* DHD_LB_TXP */
+ }
+ #endif /* BCMPCIE */

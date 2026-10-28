@@ -1,0 +1,40 @@
+dhd: log repeated messages at the info level
+
+The size of the TX work items (logged per flow ring) and the masks and
+patterns of the packet-log filters are logged as errors, which adds some
+hundred lines to the log at each start of the chip.
+
+--- a/src/bcmdhd_wlan/dhd_msgbuf.c
++++ b/src/bcmdhd_wlan/dhd_msgbuf.c
+@@ -1521,7 +1521,7 @@
+ 	/* MUST: size of the workitem must be multiples of 8x */
+ 	size = ROUNDUP(size, 8);
+ 
+-	DHD_PRINT(("%s = %u\n", __FUNCTION__, size));
++	DHD_INFO(("%s = %u\n", __FUNCTION__, size));
+ 
+ 	return size;
+ }
+@@ -1560,7 +1560,7 @@
+ 	/* MUST: size of the workitem must be multiples of 8x */
+ 	size = ROUNDUP(size, 8);
+ 
+-	DHD_PRINT(("***dhd_prot_get_h2d_txpost_size, final workitem size = %u \n", size));
++	DHD_INFO(("***dhd_prot_get_h2d_txpost_size, final workitem size = %u \n", size));
+ 
+ #ifdef FLOW_RING_PREALLOC
+ 	if (size > prealloc_size) {
+--- a/src/bcmdhd_wlan/dhd_pktlog.c
++++ b/src/bcmdhd_wlan/dhd_pktlog.c
+@@ -868,9 +868,9 @@
+ 	}
+ 
+ 	dhd_prhex("mask", (volatile uchar *)&filter->info[filter->list_cnt].mask[0],
+-			mask_size, DHD_ERROR_VAL);
++			mask_size, DHD_INFO_VAL);
+ 	dhd_prhex("pattern", (volatile uchar *)&filter->info[filter->list_cnt].pattern[0],
+-			pattern_size, DHD_ERROR_VAL);
++			pattern_size, DHD_INFO_VAL);
+ 
+ 	if (mask_size != pattern_size) {
+ 		DHD_ERROR(("%s(): Mask and pattern not the same size\n", __FUNCTION__));

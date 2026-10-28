@@ -1,0 +1,18 @@
+LICENSE   := GPLv2
+VERSION   := git
+DOWNLOADS := bcmdhd_wlan.git
+
+#
+# Broadcom FullMAC driver of the WiFi chip of the Pixel 7 (BCM4389, PCIe) as
+# used by the WiFi driver
+#
+URL(bcmdhd_wlan) := https://android.googlesource.com/kernel/google-modules/wlan/bcmdhd/bcm4398
+REV(bcmdhd_wlan) := 85d6c7b2eb4e81fffb3cb349db06c885bfc0005b
+DIR(bcmdhd_wlan) := src/bcmdhd_wlan
+
+PATCHES   := $(addprefix patches/bcmdhd_wlan/, \
+               0001-pcie-wait-for-flr.patch \
+               0002-dhd_linux-reinit-tasklets-on-dpc-enable.patch \
+               0003-wl_cfg80211-report-port-authorization.patch \
+               0004-quiet-repeated-messages.patch)
+PATCH_OPT := -p1

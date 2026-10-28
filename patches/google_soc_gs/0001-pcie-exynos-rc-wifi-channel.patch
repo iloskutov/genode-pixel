@@ -1,0 +1,237 @@
+pcie-exynos-rc: PCIe channel 1 for the WiFi chip in Genode
+
+* SYSREG_HSI2 is shared with the UFS host and owned by Genode's platform
+  driver, which sets the shareability bits of the channel. The 'sysreg'
+  region is not mapped. The 'soc' region, absent on the GS201, is
+  optional, and its accesses are skipped without it.
+* The outbound window of the ATU covers the whole memory region instead
+  of 2 MiB.
+* The link stays out of L1 (APP_XFER_PENDING stays asserted, L1 requests
+  of the endpoint are refused) and the directed speed change is cleared
+  after the link training: the WiFi chip fails to leave L1 again, and a
+  recovery of the link with a speed change takes the link down.
+* MSIs arrive at the dedicated interrupt of the device tree.
+* The probe does not power down the PHY, its registers are not accessible
+  before the link is powered on.
+
+--- a/src/google_soc_gs/drivers/pci/controller/dwc/pcie-exynos-rc.c
++++ b/src/google_soc_gs/drivers/pci/controller/dwc/pcie-exynos-rc.c
+@@ -1667,11 +1667,9 @@
+ 	exynos_pcie_rc_wr_own_conf(pp, PCIE_ATU_CR1_OUTBOUND1, 4, EXYNOS_PCIE_ATU_TYPE_MEM);
+ 	exynos_pcie_rc_wr_own_conf(pp, PCIE_ATU_LOWER_BASE_OUTBOUND1, 4, entry->res->start);
+ 	exynos_pcie_rc_wr_own_conf(pp, PCIE_ATU_UPPER_BASE_OUTBOUND1, 4, (entry->res->start >> 32));
+-	/* exynos_pcie_rc_wr_own_conf(pp, PCIE_ATU_LIMIT_OUTBOUND1, 4,
+-	 *			      entry->res->start +
+-	 *			      resource_size(entry->res) - 1);
+-	 */
+-	exynos_pcie_rc_wr_own_conf(pp, PCIE_ATU_LIMIT_OUTBOUND1, 4, entry->res->start + SZ_2M - 1);
++	exynos_pcie_rc_wr_own_conf(pp, PCIE_ATU_LIMIT_OUTBOUND1, 4,
++				   entry->res->start +
++				   resource_size(entry->res) - 1);
+ 	exynos_pcie_rc_wr_own_conf(pp, PCIE_ATU_LOWER_TARGET_OUTBOUND1, 4,
+ 				   entry->res->start - entry->offset);
+ 	exynos_pcie_rc_wr_own_conf(pp, PCIE_ATU_UPPER_TARGET_OUTBOUND1, 4,
+@@ -1829,7 +1827,10 @@
+ 	else
+ 		ret = dw_pcie_read(va_cfg_base + where, size, val);
+ 
+-	exynos_elbi_write(exynos_pcie, 0x0, PCIE_APP_XFER_PENDING);
++	/*
++	 * APP_XFER_PENDING stays asserted, which keeps the link out of L1:
++	 * the WiFi chip fails to leave L1 again (Genode).
++	 */
+ 	// Fake code for Samsung Modem.
+ 	if (exynos_pcie->ep_device_type == EP_SAMSUNG_MODEM) {
+ 
+@@ -2001,30 +2002,20 @@
+ 		/* set PCIe Axcache[1] = 1 */
+ 		exynos_pcie_rc_wr_own_conf(pp, PCIE_COHERENCY_CONTROL_3_OFF, 4, 0x10101010);
+ 
+-		/* set PCIe Shareability */
+-		val = exynos_sysreg_read(exynos_pcie, sysreg_sharability);
+-		val &= ~(PCIE_SYSREG_HSIX_SHARABLE_MASK);
+-		val |= PCIE_SYSREG_HSIX_SHARABLE_ENABLE;
+-		exynos_sysreg_write(exynos_pcie, val, sysreg_sharability);
++		/* PCIe Shareability: set by the platform driver (Genode) */
+ 	} else {
+ 		dev_dbg(pci->dev, "disable cache coherency.\n");
+ 
+ 		/* clear PCIe Axcache[1] = 1 */
+ 		exynos_pcie_rc_wr_own_conf(pp, PCIE_COHERENCY_CONTROL_3_OFF, 4, 0x0);
+ 
+-		/* clear PCIe Shareability */
+-		val = exynos_sysreg_read(exynos_pcie, sysreg_sharability);
+-		val &= ~(PCIE_SYSREG_HSIX_SHARABLE_MASK);
+-		exynos_sysreg_write(exynos_pcie, val, sysreg_sharability);
++		/* PCIe Shareability: left to the platform driver (Genode) */
+ 	}
+ 
+ 	//pcie_sysmmu_set_use_iocc(pcie_ch_to_hsi(exynos_pcie->ch_num));
+ 
+ 	exynos_pcie_rc_rd_own_conf(pp, PCIE_COHERENCY_CONTROL_3_OFF, 4, &val);
+ 	dev_dbg(pci->dev, "PCIe Axcache[1] = 0x%x\n", val);
+-
+-	dev_dbg(pci->dev, "PCIe Shareability(offset: 0x%x) = 0x%x\n", sysreg_sharability,
+-		exynos_sysreg_read(exynos_pcie, sysreg_sharability));
+ }
+ 
+ static int exynos_pcie_rc_parse_dt(struct device *dev, struct exynos_pcie *exynos_pcie)
+@@ -2456,12 +2447,15 @@
+ 		return ret;
+ 	}
+ 
++	/* the GS201 device tree has no "soc" region */
+ 	temp_rsc = platform_get_resource_byname(pdev, IORESOURCE_MEM, "soc");
+-	exynos_pcie->soc_base = devm_ioremap_resource(&pdev->dev, temp_rsc);
+-	if (IS_ERR(exynos_pcie->soc_base)) {
+-		ret = PTR_ERR(exynos_pcie->soc_base);
++	if (temp_rsc) {
++		exynos_pcie->soc_base = devm_ioremap_resource(&pdev->dev, temp_rsc);
++		if (IS_ERR(exynos_pcie->soc_base)) {
++			ret = PTR_ERR(exynos_pcie->soc_base);
+ 
+-		return ret;
++			return ret;
++		}
+ 	}
+ 
+ 	temp_rsc = platform_get_resource_byname(pdev, IORESOURCE_MEM, "udbg");
+@@ -2481,13 +2475,10 @@
+ 		return ret;
+ 	}
+ 
+-	temp_rsc = platform_get_resource_byname(pdev, IORESOURCE_MEM, "sysreg");
+-	exynos_pcie->sysreg_base = devm_ioremap_resource(&pdev->dev, temp_rsc);
+-	if (IS_ERR(exynos_pcie->sysreg_base)) {
+-		ret = PTR_ERR(exynos_pcie->sysreg_base);
+-
+-		return ret;
+-	}
++	/*
++	 * SYSREG_HSI2 is shared with the UFS host and owned by the platform
++	 * driver, which sets the shareability bits of this channel (Genode)
++	 */
+ 
+ 	temp_rsc = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dbi");
+ 	exynos_pcie->rc_dbi_base = devm_ioremap_resource(&pdev->dev, temp_rsc);
+@@ -2521,7 +2512,7 @@
+ 
+ static void exynos_pcie_rc_enable_interrupts(struct dw_pcie_rp *pp, int enable)
+ {
+-	u32 val_irq0, val_irq1, val_irq2;
++	u32 val_irq0, val_irq1, val_irq2, val;
+ 	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
+ 	struct exynos_pcie *exynos_pcie = to_exynos_pcie(pci);
+ 
+@@ -2546,6 +2537,11 @@
+ 		val_irq2 |= IRQ_RADM_CPL_TIMEOUT_ENABLE;
+ 		exynos_elbi_write(exynos_pcie, val_irq2, PCIE_IRQ2_EN);
+ 
++		/* refuse L1 requests of the endpoint (Genode) */
++		val = exynos_elbi_read(exynos_pcie, PCIE_APP_REQ_EXIT_L1_MODE);
++		val |= L1_REQ_NAK_CONTROL_MASTER;
++		exynos_elbi_write(exynos_pcie, val, PCIE_APP_REQ_EXIT_L1_MODE);
++
+ 		dev_dbg(pci->dev, "enabled irqs:IRQ0_EN = 0x%x / IRQ1_EN = 0x%x / IRQ2_EN = 0x%x\n",
+ 			val_irq0, val_irq1, val_irq2);
+ 	} else {
+@@ -3742,6 +3738,16 @@
+ 		if (exynos_pcie->target_link_speed != LINK_SPEED_GEN1)
+ 			usleep_range(2800, 3000); /* 3 ms - OK */
+ 
++		/*
++		 * Clear the directed speed change that dw_pcie_setup_rc() set for
++		 * the change to Gen2. Otherwise, a later recovery of the link
++		 * enters the RCVRY_SPEED state, which fails with the WiFi chip
++		 * and takes the link down (Genode).
++		 */
++		exynos_pcie_rc_rd_own_conf(pp, PCIE_LINK_WIDTH_SPEED_CONTROL, 4, &val);
++		val &= DIRECT_SPEED_CHANGE_ENABLE_MASK;
++		exynos_pcie_rc_wr_own_conf(pp, PCIE_LINK_WIDTH_SPEED_CONTROL, 4, val);
++
+ 		exynos_pcie_rc_rd_own_conf(pp, PCIE_LINK_CTRL_STAT, 4, &val);
+ 		cur_link_width = (val >> 20) & (0x3F);
+ 		val = (val >> 16) & 0xf;
+@@ -3800,7 +3806,7 @@
+ 		exynos_pcie_rc_prog_viewport_cfg0(pp, busdev);
+ 		exynos_pcie_rc_prog_viewport_mem_outbound(pp);
+ 
+-		exynos_elbi_write(exynos_pcie, 0x0, PCIE_APP_XFER_PENDING);
++		/* APP_XFER_PENDING stays asserted, see exynos_pcie_rc_rd_other_conf */
+ 	}
+ 
+ 	return 0;
+@@ -3876,7 +3882,9 @@
+ 		pinctrl_select_state(exynos_pcie->pcie_pinctrl,
+ 				     exynos_pcie->pin_state[PCIE_PIN_ACTIVE]);
+ 
+-		exynos_soc_write(exynos_pcie, 0x15, 0x4000);
++		/* the GS201 has no "soc" region (Genode) */
++		if (exynos_pcie->soc_base)
++			exynos_soc_write(exynos_pcie, 0x15, 0x4000);
+ 
+ 		/* phy all power down clear */
+ 		if (exynos_pcie->phy_ops.phy_all_pwrdn_clear)
+@@ -4057,9 +4065,11 @@
+ 			      __func__, gpio_get_value(exynos_pcie->perst_gpio));
+ 
+ 		// level clk switching for stability
+-		val = exynos_soc_read(exynos_pcie, 0x4000);
+-		val &= ~(0x3);
+-		exynos_soc_write(exynos_pcie, val, 0x4000); //sw mode and select osc_clk
++		if (exynos_pcie->soc_base) {
++			val = exynos_soc_read(exynos_pcie, 0x4000);
++			val &= ~(0x3);
++			exynos_soc_write(exynos_pcie, val, 0x4000); //sw mode and select osc_clk
++		}
+ 
+ 
+ 		/* LTSSM disable */
+@@ -5351,6 +5361,19 @@
+ 		dev_dbg(&pdev->dev, "MSI is supported with 64-bit mask.\n");
+ 	}
+ 
++	/*
++	 * The MSIs arrive at the dedicated interrupt of the device tree (the
++	 * second one), not at the ELBI interrupt, which dw_pcie_host_init()
++	 * would take: the ELBI routes MSIs only with use-msi = "true", which
++	 * is "false" for the WiFi chip (Genode)
++	 */
++	{
++		int msi_irq = platform_get_irq(pdev, 1);
++
++		if (msi_irq > 0)
++			pp->msi_irq[0] = msi_irq;
++	}
++
+ 	ret = dw_pcie_host_init(pp);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "failed to dw pcie host init\n");
+@@ -5358,6 +5381,14 @@
+ 		return ret;
+ 	}
+ 
++	/* the host initialization may clear the L1 setting (Genode) */
++	{
++		u32 l1_mode = exynos_elbi_read(exynos_pcie, PCIE_APP_REQ_EXIT_L1_MODE);
++
++		l1_mode |= L1_REQ_NAK_CONTROL_MASTER;
++		exynos_elbi_write(exynos_pcie, l1_mode, PCIE_APP_REQ_EXIT_L1_MODE);
++	}
++
+ 	if (pp->msi_domain) {
+ 		msi_domain = pp->msi_domain;
+ 		msi_domain_info = (struct msi_domain_info *)msi_domain->host_data;
+@@ -5711,7 +5742,11 @@
+ 
+ 	exynos_pcie_rc_pcie_ops_init(pp);
+ 
+-	exynos_pcie_rc_resumed_phydown(pp);
++	/*
++	 * No exynos_pcie_rc_resumed_phydown(pp) here: the ELBI registers it
++	 * writes are not accessible before the link is powered on, which the
++	 * first 'poweron' does in full (Genode)
++	 */
+ 
+ 	if (exynos_pcie->use_nclkoff_en)
+ 		exynos_pcie_rc_nclkoff_ctrl(pdev, exynos_pcie);
