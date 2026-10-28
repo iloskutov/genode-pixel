@@ -6,8 +6,8 @@
  * The register offsets are taken from the vendor's clock description of the
  * GS201 (cmucal-sfr.c) and its device tree. All clocks are fed by the
  * 26 MHz oscillator. Only the clocks of the drivers of this repository are
- * described: the bus clocks of the PERIC1 block and the USI0 serial
- * interface in SPI mode (touchscreen).
+ * described: the bus clocks of the PERIC1 block, the USI0 serial interface
+ * in SPI mode (touchscreen), and the UFS host controller.
  */
 
 /*
@@ -119,11 +119,37 @@ struct Driver::Cmu : private Noncopyable
 		void _enable() override { write<Reg::Sw_conf>(_mode); }
 	};
 
+	/*
+	 * Bits of a system register, set to 'value' within 'mask' on enable
+	 *
+	 * The platform driver owns the system-register page, so a driver does
+	 * not need a mapping of it. The bits are left alone on disable.
+	 */
+	struct Sysreg_bits : Clock, private Genode::Mmio<0x4>
+	{
+		struct Reg : Register<0x0, 32> { };
+
+		uint32_t const _mask;
+		uint32_t const _value;
+
+		Sysreg_bits(Clocks &clocks, Name const &name,
+		            Byte_range_ptr const &range, uint32_t mask, uint32_t value)
+		:
+			Clock(clocks, name), Mmio(range), _mask(mask), _value(value & mask)
+		{ }
+
+		void _enable() override
+		{
+			write<Reg>((read<Reg>() & ~_mask) | _value);
+		}
+	};
+
 	enum : addr_t {
 		CMU_TOP_BASE       = 0x1e080000,
 		CMU_PERIC1_BASE    = 0x10c00000,
 		CMU_SIZE           = 0x4000,
 		SYSREG_PERIC1_BASE = 0x10c21000,
+		SYSREG_HSI2_BASE   = 0x14420000,
 		SYSREG_SIZE        = 0x1000,
 
 		/* CMU_TOP: gates of the clocks that feed the PERIC1 block */
@@ -137,11 +163,16 @@ struct Driver::Cmu : private Noncopyable
 
 		/* SYSREG_PERIC1: protocol of USI0 */
 		USI0_SW_CONF_OFFSET = 0x0,
+
+		/* SYSREG_HSI2: I/O coherency of the UFS host controller */
+		UFS_IOCC_OFFSET = 0x710,
+		UFS_IOCC_MASK   = 0x3,
 	};
 
 	Attached_mmio<0> _cmu_top       { _env, {(char *)CMU_TOP_BASE,       CMU_SIZE} };
 	Attached_mmio<0> _cmu_peric1    { _env, {(char *)CMU_PERIC1_BASE,    CMU_SIZE} };
 	Attached_mmio<0> _sysreg_peric1 { _env, {(char *)SYSREG_PERIC1_BASE, SYSREG_SIZE} };
+	Attached_mmio<0> _sysreg_hsi2   { _env, {(char *)SYSREG_HSI2_BASE,   SYSREG_SIZE} };
 
 	Gate _top_peric1_ip  { _clocks, "top-peric1-ip",  _osc_clk,
 	                       _cmu_top.range_at(TOP_PERIC1_IP_OFFSET) };
@@ -158,6 +189,19 @@ struct Driver::Cmu : private Noncopyable
 	Usi_mode _usi0_spi_mode { _clocks, "usi0-spi-mode",
 	                          _sysreg_peric1.range_at(USI0_SW_CONF_OFFSET),
 	                          Usi_mode::SPI };
+
+	/*
+	 * UFS host controller. Its clock is set up by the boot loader and stays
+	 * untouched, the rate is the one Android reports for it. The vendor's
+	 * driver derives the timing of the PHY from it. The coherency bits make
+	 * the DMA of the controller coherent with the CPU caches, as the
+	 * driver's 'dma-coherent' device-tree property expects.
+	 */
+	Fixed_clock _ufs_embd { _clocks, "ufs-embd", Clock::Rate { 177664000 } };
+
+	Sysreg_bits _ufs_iocc { _clocks, "ufs-iocc",
+	                        _sysreg_hsi2.range_at(UFS_IOCC_OFFSET),
+	                        UFS_IOCC_MASK, UFS_IOCC_MASK };
 
 	Cmu(Genode::Env &env, Clocks &clocks, Clock &osc_clk)
 	:

@@ -91,4 +91,20 @@ devices
   + clock spi0-pclk  | driver_name: gate_spi_clk
   + clock usi0-spi-mode
   + power-domain touch-power
+
++ device ufs | type: samsung,exynos-ufs
+  .
+  . UFS host controller of the HSI2 block (ufs@14700000). Both clocks of
+  . the device tree are the same clock, set up by the boot loader.
+  .
+  + io_mem | address: 0x14700000 | size: 0x200  | . HCI
+  + io_mem | address: 0x14701100 | size: 0x200  | . vendor HCI
+  + io_mem | address: 0x14780000 | size: 0xa000 | . UniPro
+  + io_mem | address: 0x14600000 | size: 0x100  | . UFS protector
+  + io_mem | address: 0x14704000 | size: 0x3000 | . PHY
+  + io_mem | address: 0x14708000 | size: 0x804  | . CPORT
+  + irq    | number: 485
+  + clock ufs-embd | driver_name: GATE_UFS_EMBD
+  + clock ufs-embd | driver_name: UFS_EMBD
+  + clock ufs-iocc
 -
