@@ -1,0 +1,18 @@
+UFS storage driver for the Google Pixel 7
+
+The driver 'exynos_ufs' is a port of the UFS and SCSI cores of Linux with
+the vendor's Exynos UFS host-controller driver. It provides the logical
+units of the storage (sda, sdb, ...) as Block sessions with the block size
+of the unit (4 KiB), and reports them if configured with 'report: yes'.
+The driver does not handle partitions. The inline encryption of the vendor's
+driver is not built. It needs the ports 'pixel_linux' and 'google_soc_gs'.
+
+Block sessions are assigned to units by policies, e.g.:
+
+! + config | report: yes
+!   + default-policy | device: sda | writeable: no
+
+The scenario 'run/exynos_ufs_pixel' reads the first 256 MiB of 'sda' via
+'block_tester' without writing to the storage:
+
+! make run/exynos_ufs_pixel KERNEL=hw BOARD=google_pixel7

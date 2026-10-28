@@ -1,0 +1,72 @@
+/dts-v1/;
+
+/*
+ * \brief  Device tree of the UFS storage of the Google Pixel 7
+ * \author Ivan Loskutov
+ * \date   2026-10-28
+ *
+ * The tree describes what the UFS driver needs: the UFS host controller and
+ * the interrupt controller. The values are those of the vendor's device tree
+ * for the phone (gs201-panther).
+ *
+ * Left out are references that have no counterpart in the driver's Linux
+ * emulation environment: clocks (the driver gets them by name from the
+ * platform driver), pin-control states and the supply of the storage (set
+ * up by the boot loader), the security chip (key programming of the inline
+ * encryption, which is not built), and the system registers of the HSI2
+ * block. The coherency bits that the node 'ufs-iocc' describes are set
+ * by the platform driver (clock 'ufs-iocc'), the driver's own write of them
+ * is dropped (see dummies.c).
+ */
+
+/*
+ * SPDX-License-Identifier: GPL-2.0
+ */
+
+/ {
+	model = "GS201 PANTHER MP based on GS201";
+	#address-cells = <2>;
+	#size-cells = <1>;
+	compatible = "google,GS201 PANTHER", "google,GS201";
+	interrupt-parent = <&gic>;
+
+	ufs@14700000 {
+		compatible = "samsung,exynos-ufs";
+		reg = <0 0x14700000 0x200>,   /* HCI */
+		      <0 0x14701100 0x200>,   /* vendor HCI */
+		      <0 0x14780000 0xa000>,  /* UniPro */
+		      <0 0x14600000 0x100>,   /* UFS protector */
+		      <0 0x14704000 0x3000>,  /* PHY */
+		      <0 0x14708000 0x804>;   /* CPORT */
+		interrupts = <0 0x1c5 4>;
+		clock-names = "GATE_UFS_EMBD", "UFS_EMBD";
+		freq-table-hz = <0 0 0 0>;
+		ufs,pmd-attr-lane = [02];
+		ufs,pmd-attr-gear = [04];
+		evt-ver = [00];
+		brd-for-cal = [01];
+		dma-coherent;
+		fixed-prdt-req_list-ocs;
+
+		ufs-phy-iso {
+			offset = <0x3ec8>;
+			mask = <0x01>;
+			val = <0x01>;
+		};
+
+		ufs-iocc {
+			offset = <0x710>;
+			mask = <0x03>;
+			val = <0x03>;
+		};
+	};
+
+	gic: interrupt-controller@10400000 {
+		compatible = "arm,gic-v3";
+		#interrupt-cells = <3>;
+		interrupt-controller;
+		reg = <0 0x10400000 0x10000>,
+		      <0 0x10440000 0x100000>;
+		interrupts = <1 9 4>;
+	};
+};
