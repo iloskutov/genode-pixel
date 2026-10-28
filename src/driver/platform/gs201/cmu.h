@@ -7,8 +7,8 @@
  * GS201 (cmucal-sfr.c) and its device tree. All clocks are fed by the
  * 26 MHz oscillator. Only the clocks of the drivers of this repository are
  * described: the bus clocks of the PERIC1 block, the USI0 serial interface
- * in SPI mode (touchscreen), the UFS host controller, and PCIe channel 1
- * (WiFi).
+ * in SPI mode (touchscreen), the USI13 serial interface in I2C mode (Type-C
+ * controller), the UFS host controller, and PCIe channel 1 (WiFi).
  */
 
 /*
@@ -100,6 +100,41 @@ struct Driver::Cmu : private Noncopyable
 	};
 
 	/*
+	 * Clock divider (CLK_CON_DIV register)
+	 *
+	 * Enabling writes the ratio (bits 3:0, the clock is divided by ratio
+	 * + 1) and waits until the busy bit 16 is cleared, so that the rate
+	 * does not depend on what the boot loader left in the register.
+	 */
+	struct Div : Clock, private Genode::Mmio<0x4>
+	{
+		struct Reg : Register<0x0, 32>
+		{
+			struct Ratio : Bitfield<0,  4> { };
+			struct Busy  : Bitfield<16, 1> { };
+		};
+
+		Clock         &_parent;
+		unsigned const _divider;   /* 1..16 */
+
+		Div(Clocks &clocks, Name const &name, Clock &parent, unsigned divider,
+		    Byte_range_ptr const &range)
+		:
+			Clock(clocks, name), Mmio(range), _parent(parent), _divider(divider)
+		{ }
+
+		void _enable() override
+		{
+			write<Reg::Ratio>(_divider - 1);
+			for (unsigned i = 0; i < MAX_BUSY_POLLS; i++)
+				if (!read<Reg::Busy>())
+					break;
+		}
+
+		Rate rate() const override { return Rate { _parent.rate().value / _divider }; }
+	};
+
+	/*
 	 * Protocol of a universal serial interface (USI), selected in the
 	 * system registers of its block: 1 = UART, 2 = SPI, 4 = I2C
 	 */
@@ -163,6 +198,12 @@ struct Driver::Cmu : private Noncopyable
 		SPI0_IPCLK_OFFSET = 0x2030,
 		SPI0_PCLK_OFFSET  = 0x2034,
 
+		/* CMU_PERIC1: USI13 user multiplexer, divider, IP and bus clock */
+		USI13_MUX_OFFSET   = 0x0660,
+		USI13_DIV_OFFSET   = 0x1818,
+		USI13_IPCLK_OFFSET = 0x2050,
+		USI13_PCLK_OFFSET  = 0x2054,
+
 		/* CMU_TOP: gate of the clock that feeds the PCIe part of HSI2 */
 		TOP_HSI2_PCIE_OFFSET = 0x20c8,
 
@@ -174,8 +215,9 @@ struct Driver::Cmu : private Noncopyable
 		PCIE1_DRV_APB_OFFSET   = 0x205c,
 		PCIE1_PHY_APB_OFFSET   = 0x2074,
 
-		/* SYSREG_PERIC1: protocol of USI0 */
-		USI0_SW_CONF_OFFSET = 0x0,
+		/* SYSREG_PERIC1: protocol of USI0 and USI13 */
+		USI0_SW_CONF_OFFSET  = 0x0,
+		USI13_SW_CONF_OFFSET = 0x14,
 
 		/* SYSREG_HSI2: I/O coherency of the UFS host and of PCIe channel 1 */
 		UFS_IOCC_OFFSET   = 0x710,
@@ -204,6 +246,22 @@ struct Driver::Cmu : private Noncopyable
 	Usi_mode _usi0_spi_mode { _clocks, "usi0-spi-mode",
 	                          _sysreg_peric1.range_at(USI0_SW_CONF_OFFSET),
 	                          Usi_mode::SPI };
+
+	/*
+	 * USI13 in I2C mode (Type-C controller). The I2C driver derives its
+	 * timing from the rate of the IP clock: the oscillator, divided by 1.
+	 */
+	Mux      _usi13_mux      { _clocks, "usi13-mux",
+	                           _cmu_peric1.range_at(USI13_MUX_OFFSET) };
+	Div      _usi13_div      { _clocks, "usi13-div", _osc_clk, 1,
+	                           _cmu_peric1.range_at(USI13_DIV_OFFSET) };
+	Gate     _usi13_ipclk    { _clocks, "usi13-ipclk", _usi13_div,
+	                           _cmu_peric1.range_at(USI13_IPCLK_OFFSET) };
+	Gate     _usi13_pclk     { _clocks, "usi13-pclk",  _osc_clk,
+	                           _cmu_peric1.range_at(USI13_PCLK_OFFSET) };
+	Usi_mode _usi13_i2c_mode { _clocks, "usi13-i2c-mode",
+	                           _sysreg_peric1.range_at(USI13_SW_CONF_OFFSET),
+	                           Usi_mode::I2C };
 
 	/*
 	 * UFS host controller. Its clock is set up by the boot loader and stays

@@ -22,8 +22,9 @@ devices
 
 + device gpio_peric1 | type: samsung,gs201-gpio
   .
-  . GPIO controller of the PERIC1 block (banks gpp20 to gpp23), used by the
-  . pin driver gs201_pio for the SPI0 bus and the touchscreen's reset
+  . GPIO controller of the PERIC1 block (banks gpp20 to gpp27), used by the
+  . pin driver gs201_pio for the SPI0 bus, the touchscreen's reset, and the
+  . I2C bus of USI13
   .
   + io_mem | address: 0x10c40000 | size: 0x1000
 
@@ -34,6 +35,19 @@ devices
   . power line of the WiFi chip
   .
   + io_mem | address: 0x14440000 | size: 0x1000
+
++ device hsi2c13 | type: samsung,exynos5-hsi2c
+  .
+  . I2C controller of USI13 (hsi2c@10D60000), the bus of the MAX77759 with
+  . its Type-C controller. The I2C driver polls the controller.
+  .
+  + io_mem | address: 0x10d60000 | size: 0x1000
+  + clock top-peric1-noc
+  + clock usi13-mux
+  + clock usi13-div
+  + clock usi13-ipclk | driver_name: ipclk_hsi2c
+  + clock usi13-pclk
+  + clock usi13-i2c-mode
 
 + device dpu | type: samsung,exynos-decon
   .
