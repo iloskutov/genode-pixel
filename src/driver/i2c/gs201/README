@@ -1,0 +1,23 @@
+I2C driver for the GS201 SoC of the Google Pixel 7
+
+The driver 'gs201_i2c' provides the I2c session for the slaves of one
+Samsung HSI2C controller in the devices ROM. The controller is polled, in
+standard or fast mode. A session reaches the one bus address of its policy,
+and only if the address is listed by an 'allow' node. 'max_write' limits
+the length of a write message, 1 permits the register pointer only:
+
+! + config | bus_speed_hz: 400000
+!   + allow  | bus_address: 0x25
+!   + policy | label_prefix: exynos_usb_gadget | bus_address: 0x25
+!            | max_write: 2
+
+The clocks of the controller are provided by 'gs201_platform', its pins by
+'gs201_pio'. The logic without Genode dependencies is in 'hsi2c.h', with
+host tests:
+
+! make -C repos/pixel/src/driver/i2c/gs201/test
+
+The scenario 'run/gs201_i2c_pixel' reads the ID of the Type-C controller of
+the MAX77759 on the bus of USI13:
+
+! make run/gs201_i2c_pixel KERNEL=hw BOARD=google_pixel7
