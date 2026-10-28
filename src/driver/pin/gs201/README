@@ -5,4 +5,4 @@ GPIO controllers in the devices ROM as Pin_state, Pin_control, and IRQ
 sessions, and configures pins as listed in its configuration.
 
 It is part of the scenarios 'run/exynos_fb_pixel', 'run/ft3658_touch_pixel',
-and 'run/keys_pixel'.
+'run/keys_pixel', and 'run/wifi_fetchurl_pixel'.

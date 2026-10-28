@@ -1,0 +1,31 @@
+WiFi driver library for the Google Pixel 7
+
+The library 'pixel_wifi' is the 'wifi.lib.so' of Genode's WiFi driver
+'wifi' (repos/dde_linux/src/driver/wifi) for the phone: a port of the
+wireless core of Linux with the vendor's driver for the Broadcom BCM4389
+chip and the vendor's driver of PCIe channel 1, the link to the chip. The
+driver is configured and used like on other boards, see the README of the
+WiFi driver. It needs the ports 'pixel_linux', 'google_soc_gs', and
+'bcmdhd_wlan', the driver binary additionally 'wpa_supplicant', 'libnl',
+and 'openssl'.
+
+The power management of the link is not used: the chip stays powered and
+the link stays out of its low-power states. The phone's boot loader leaves
+the PHY of the link isolated, bootstrap releases it.
+
+The firmware of the chip is not part of Genode. The tool
+'tool/pull_wifi_firmware' copies it from a phone running Android into the
+tar archive 'contrib/pixel_wifi_firmware.tar'. The files are readable for
+root only, so the Android build must permit 'adb root' (userdebug, e.g.,
+LineageOS).
+
+The scenario 'run/wifi_fetchurl_pixel' connects to an access point and
+downloads a page via 'fetchurl'. It takes the access point from the
+environment variables GENODE_WIFI_SSID and GENODE_WIFI_PSK, the firmware
+from WIFI_FW if given. It needs the repository 'gems' for the pipe file
+system of 'fetchurl', and the ports 'curl' and 'lwip':
+
+! adb root
+! repos/pixel/tool/pull_wifi_firmware
+! make run/wifi_fetchurl_pixel KERNEL=hw BOARD=google_pixel7 \
+!      GENODE_WIFI_SSID=<ssid> GENODE_WIFI_PSK=<passphrase>

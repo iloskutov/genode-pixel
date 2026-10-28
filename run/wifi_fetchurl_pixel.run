@@ -1,0 +1,223 @@
+#
+# WiFi driver for the Google Pixel 7
+#
+# Genode's WiFi driver 'wifi' with the library of the Pixel 7 connects to the
+# access point given by the environment variables GENODE_WIFI_SSID and
+# GENODE_WIFI_PSK (WPA2 unless GENODE_WIFI_WPA says otherwise).
+# 'nic_router' takes the address of its uplink domain from the access point
+# via DHCP and hands out an address to 'fetchurl', which downloads Mozilla's
+# connectivity-check page and logs it ("success"). The test succeeded when
+# "fetchurl" exits with the value 0.
+#
+# The firmware of the WiFi chip is not part of Genode. It is taken from the
+# tar archive WIFI_FW (environment or make variable), by default the one
+# that 'tool/pull_wifi_firmware' creates from a phone running Android. A
+# relative path is relative to the build directory.
+#
+#   make run/wifi_fetchurl_pixel KERNEL=hw BOARD=google_pixel7 \
+#        GENODE_WIFI_SSID=<ssid> GENODE_WIFI_PSK=<passphrase>
+#
+
+assert {[have_board google_pixel7]}
+
+foreach var { GENODE_WIFI_SSID GENODE_WIFI_PSK } {
+	if {![info exists ::env($var)]} {
+		puts stderr "Error: the access point is given by GENODE_WIFI_SSID and GENODE_WIFI_PSK"
+		exit 1
+	}
+}
+
+source [genode_dir]/repos/dde_linux/run/wifi_config.inc
+
+set wifi_fw [file join [genode_dir] contrib pixel_wifi_firmware.tar]
+if {[info exists ::env(WIFI_FW)]} {
+	set wifi_fw [file normalize $::env(WIFI_FW)] }
+
+if {![file exists $wifi_fw]} {
+	puts stderr "Error: WiFi firmware '$wifi_fw' missing, create it with"
+	puts stderr "       '[genode_dir]/repos/pixel/tool/pull_wifi_firmware'"
+	puts stderr "       or name another archive by WIFI_FW"
+	exit 1
+}
+
+build {
+	core init lib/ld timer
+	server/report_rom
+	server/dynamic_rom
+	server/nic_router
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/rtc/dummy
+	driver/wifi
+	lib/pixel_wifi
+	lib/wpa_supplicant
+	lib/wpa_driver_nl80211
+	lib/libnl
+	lib/libc
+	lib/vfs
+	lib/vfs_jitterentropy
+	lib/vfs_lwip
+	lib/vfs_pipe
+	lib/curl
+	lib/libssl1
+	lib/libcrypto1
+	lib/zlib
+	app/fetchurl
+}
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start report_rom | ram: 4M
+  + provides
+    + service Report
+    + service ROM
+  + config | verbose: yes
+  + route | + any-service | + parent
+
++ start platform | caps: 150 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+  + config
+    + policy | label_prefix: gs201_pio | info: yes
+      + device gpio_far_alive
+      + device gpio_hsi2
+    + policy | label_prefix: wifi | info: yes
+      + device pcie1
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start gs201_pio | caps: 150 | ram: 2M
+  + provides
+    + service Pin_state
+    + service Pin_control
+    + service IRQ
+  + config
+    + out    pcie1_perst    | bank: gph2 | index: 0 | default: no
+    + out    wlan_reg_on    | bank: gph2 | index: 4 | default: no
+    + select pcie1_clkreq   | bank: gph2 | index: 1 | function: 2 | pull: up
+    + in     wlan_dev_wake  | bank: gph2 | index: 5 | pull: down
+    + in     wlan_host_wake | bank: gpa6 | index: 1 | pull: down
+    + policy | label: wifi -> gph2-0 | pin: pcie1_perst
+    + policy | label: wifi -> gph2-4 | pin: wlan_reg_on
+  + route
+    + service Platform | + child platform
+    + any-service      | + parent
+
++ start dummy_rtc
+  + provides | + service Rtc
+  + route | + any-service | + parent
+
++ start config_rom | ram: 4M
+  + binary dynamic_rom
+  + provides | + service ROM
+  + config | verbose: yes
+    + rom wifi_config
+      + inline | description: scan
+} [wifi_config 10 10 no {}] {
+      + sleep | milliseconds: 5000
+      + inline | description: connect
+} [wifi_config 10 10 no [list "[wifi_ssid] [wifi_wpa] [wifi_psk] no"]] {
+      + sleep | milliseconds: 600000
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start nic_router | caps: 200 | ram: 10M
+  + provides
+    + service Nic
+    + service Uplink
+  + config | verbose_domain_state:      yes
+           | dhcp_discover_timeout_sec: 10
+           | dhcp_request_timeout_sec:  6
+    + policy | label_prefix: fetchurl | domain: downlink
+    + policy | label_prefix: wifi     | domain: uplink
+    + domain uplink | icmp_echo_server: yes
+      + nat | domain: downlink | tcp-ports: 16384 | udp-ports: 16384 | icmp-ids: 16384
+    + domain downlink | interface: 10.0.3.1/24
+      + dhcp-server | ip_first: 10.0.3.2 | ip_last: 10.0.3.2 | dns_config_from: uplink
+      + tcp  | dst: 0.0.0.0/0 | + permit-any | domain: uplink
+      + udp  | dst: 0.0.0.0/0 | + permit-any | domain: uplink
+      + icmp | dst: 0.0.0.0/0 | domain: uplink
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start wifi | caps: 500 | ram: 128M
+  + config
+    + report | mac_address: true
+    + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc | rng: /dev/urandom
+    + vfs
+      + dir dev
+        + jitterentropy random
+        + jitterentropy urandom
+        + log
+        + null
+        + rtc
+      + dir firmware | + tar wifi_firmware.tar
+  + route
+    + service ROM | label: wifi.lib.so       | + parent | label: pixel_wifi.lib.so
+    + service ROM | label: wifi_firmware.tar | + parent | label: pixel_wifi_firmware.tar
+    + service ROM | label: dtb               | + parent | label: pixel_wifi-google_pixel7.dtb
+    + service ROM | label: wifi_config       | + child config_rom
+    + service Platform    | + child platform
+    + service Dma         | + child platform
+    + service Pin_state   | + child gs201_pio
+    + service Pin_control | + child gs201_pio
+    + service IRQ         | + child gs201_pio
+    + service Report      | + child report_rom
+    + service Rtc         | + child dummy_rtc
+    + service Uplink      | + child nic_router
+    + service Timer       | + child timer
+    + any-service         | + parent
+
++ start fetchurl | caps: 500 | ram: 32M
+  + config
+    + report | progress: yes
+    + vfs
+      + dir dev
+        + log
+        + null
+        + jitterentropy random
+        + jitterentropy urandom
+        + inline rtc | : 2026-10-28 12:00
+      + dir pipe   | + pipe
+      + dir socket | + lwip | dhcp: yes
+    + libc | stdout: /dev/log | stderr: /dev/log | rtc:    /dev/rtc
+             rng:    /dev/random | pipe:  /pipe   | socket: /socket
+    + fetch | url: http://detectportal.firefox.com/success.txt | path: /dev/log | retry: 3
+  + route
+    + service Nic    | + child nic_router
+    + service Report | + child report_rom
+    + service Timer  | + child timer
+    + any-service    | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+copy_file $wifi_fw [run_dir]/genode/pixel_wifi_firmware.tar
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever

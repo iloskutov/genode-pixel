@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+# \brief  Pull the firmware of the WiFi chip from a Pixel 7 running Android
+# \author Ivan Loskutov
+# \date   2026-10-28
+#
+# SPDX-License-Identifier: MIT
+#
+# The WiFi driver loads the firmware of the Broadcom chip, its calibration
+# data (NVRAM), the country-locale module (CLM), and the SAR configuration
+# from the directory '/firmware' of its VFS, which the run scenarios fill
+# from a tar archive. The files are not part of Genode. This tool copies
+# them via adb from the phone's '/vendor/firmware' and packs them into the
+# archive.
+#
+# usage: pull_wifi_firmware [<archive>]
+#
+# The default archive is 'contrib/pixel_wifi_firmware.tar' of the Genode
+# source tree, the one the run scenarios use unless WIFI_FW names another.
+#
+# The files are readable for root only. The phone must run an Android build
+# that permits 'adb root' (userdebug, e.g., LineageOS) with USB debugging
+# enabled, and 'adb root' must be executed before this tool.
+#
+
+set -e
+
+FILES="fw_bcmdhd.bin bcmdhd.cal bcmdhd.cal_ROW bcmdhd_clm.blob \
+       bcmdhd_clm.blob_ROW sarconfig.info"
+
+GENODE_DIR=$(cd "$(dirname "$0")/../../.." && pwd)
+
+ARCHIVE=${1:-$GENODE_DIR/contrib/pixel_wifi_firmware.tar}
+
+command -v adb > /dev/null || { echo "Error: 'adb' is not installed" >&2; exit 1; }
+
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+adb wait-for-device
+
+for file in $FILES; do
+	if ! adb pull "/vendor/firmware/$file" "$TMP_DIR/$file" > /dev/null; then
+		echo "Error: could not pull /vendor/firmware/$file, execute 'adb root' first" >&2
+		exit 1
+	fi
+done
+
+mkdir -p "$(dirname "$ARCHIVE")"
+tar cf "$ARCHIVE" --owner=0 --group=0 --numeric-owner -C "$TMP_DIR" $FILES
+
+echo "created $ARCHIVE"

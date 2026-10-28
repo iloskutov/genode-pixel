@@ -1,0 +1,125 @@
+/dts-v1/;
+
+/*
+ * \brief  Device tree of the WiFi of the Google Pixel 7
+ * \author Ivan Loskutov
+ * \date   2026-10-28
+ *
+ * The tree describes what the WiFi driver needs: PCIe channel 1 with the
+ * WiFi chip, the GPIO banks of its lines, the power-management unit, and
+ * the interrupt controller. The values are those of the vendor's device
+ * tree for the phone (gs201-panther).
+ *
+ * Left out are references that have no counterpart in the driver's Linux
+ * emulation environment: the supplies of the PHY (on, set up by the boot
+ * loader), pin-control states (the pins are configured by the pin driver),
+ * and the system registers of the HSI2 block, whose shareability bits are
+ * set by the platform driver (clock 'pcie1-iocc'). The power-management
+ * unit is only referenced for its address, the driver's accesses to it are
+ * dropped (see dummies.c).
+ */
+
+/*
+ * SPDX-License-Identifier: GPL-2.0
+ */
+
+/ {
+	model = "GS201 PANTHER MP based on GS201";
+	#address-cells = <2>;
+	#size-cells = <1>;
+	compatible = "google,GS201 PANTHER", "google,GS201";
+	interrupt-parent = <&gic>;
+
+	pmu: system-controller@18060000 {
+		compatible = "samsung,gs101-pmu", "syscon";
+		reg = <0 0x18060000 0x10000>;
+	};
+
+	pinctrl@180E0000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x180e0000 0x1000>;
+
+		/* pin 1: host wakeup of the WiFi chip, unused */
+		gpa6: gpa6 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+	};
+
+	pinctrl@14440000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x14440000 0x1000>;
+
+		/*
+		 * pin 0: reset of PCIe channel 1 (PERST), pin 4: power of the
+		 * WiFi chip (WL_REG_ON), pin 5: device wakeup, unused
+		 */
+		gph2: gph2 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+	};
+
+	pcie@14520000 {
+		compatible = "samsung,exynos-pcie-rc";
+		reg = <0 0x14520000 0x2000>,    /* ELBI */
+		      <0 0x14560000 0xd000>,    /* UDBG */
+		      <0 0x14550000 0x2000>,    /* PHY */
+		      <0 0x14800000 0x301000>,  /* DBI */
+		      <0 0x14540000 0x1000>,    /* PCS */
+		      <0 0x60ffe000 0x2000>,    /* configuration space */
+		      <0 0x14500000 0x1000>;    /* I/A */
+		reg-names = "elbi", "udbg", "phy", "dbi", "pcs", "config", "ia";
+		interrupts = <0 0x1ac 4>, <0 0x1ad 4>, <0 0x1ae 4>,
+		             <0 0x1af 4>, <0 0x1b0 4>, <0 0x1b1 4>;
+		#interrupt-cells = <1>;
+		interrupt-map-mask = <0 0 0 0>;
+		interrupt-map = <0 0 0 0 &gic 0 0x1ac 4>;
+		dma-coherent;
+		pcie,wlan-gpio = <&gph2 4 1>;
+		gpios = <&gph2 0 1>;
+		ep-device-type = <1>;
+		samsung,syscon-phandle = <&pmu>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		device_type = "pci";
+		ranges = <0x82000000 0 0x60000000 0 0x60000000 0 0xff0000>;
+		ip-ver = <0x984500>;
+		num-lanes = <1>;
+		ch-num = <1>;
+		pcie-clk-num = <0>;
+		phy-clk-num = <0>;
+		pcie-pm-qos-int = <200000>;
+		use-cache-coherency = "true";
+		use-pcieon-sleep = "false";
+		use-msi = "false";
+		use-sicd = "true";
+		use-sysmmu = "true";
+		use-ia = "true";
+		use-l1ss = "true";
+		use-secure-atu = "false";
+		pmu-offset = <0x3ec4>;
+		max-link-speed = <2>;
+
+		wlan {
+			compatible = "android,bcmdhd_wlan";
+			ch-num = <1>;
+			wl_reg_on = <&gph2 4 1>;
+			wl_dev_wake = <&gph2 5 1>;
+			wl_host_wake = <&gpa6 1 1>;
+		};
+	};
+
+	gic: interrupt-controller@10400000 {
+		compatible = "arm,gic-v3";
+		#interrupt-cells = <3>;
+		interrupt-controller;
+		reg = <0 0x10400000 0x10000>,
+		      <0 0x10440000 0x100000>;
+		interrupts = <1 9 4>;
+	};
+};

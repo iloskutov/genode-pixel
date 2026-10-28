@@ -15,6 +15,7 @@ f98ddba3a2b9fe846bce8e12b78df5e97e0f20cf26424affd456d48d3aab8536  lib/lx_emul/sh
 835b88c8ff8ad43255f7ba831339740c3a8ec5782e12326ff870ab5e89fd8f4c  lib/lx_emul/shadow/drivers/clk/clk.c
 8534c6787c68905d5940003ac3c5c2fb1d5719c5089beecca9800dd3be4efb12  lib/lx_emul/shadow/drivers/clk/clkdev.c
 942a33b9d497051496fe6eb19a7f9fbdfb7069e9805678ee03192d9b1cb08eaa  lib/lx_emul/shadow/fs/exec.c
+063f345a968971ef4f29b910150e2b025e7253c0a2aac99d4c52f67b6dd15dbe  lib/lx_emul/shadow/fs/libfs.c
 62c8724c5127d8d22513549a76fe72d21c972e2be8f1b1b45bf02a05fbda8eed  lib/lx_emul/shadow/kernel/exit.c
 a9586fbe030f6a3cc5678ce7ff0e098fe04c9c3761387964f647253317e6572e  lib/lx_emul/shadow/kernel/irq/spurious.c
 c5a24df2a6da72af001c379fc62c6d544bfb11227fd5a2583e407620ff71037b  lib/lx_emul/shadow/kernel/locking/spinlock.c
@@ -30,3 +31,4 @@ a9099789e98bae2a5eff02a1a705cc6c10b1320e96006891ba58de2891f22034  lib/lx_emul/sh
 d893063653038697dcc3091808d50d9a9218135a0b5d2f900e914d963b7452b3  lib/lx_emul/shadow/mm/vmstat.c
 5d6247d006779b5decbbd412ad0c647f1356a7853bfb555174a498a4263d2186  lib/lx_emul/time_initial.c
 8ff31f8f6e488b4d4c6034664b5543cc04200295a499d9053fd4560169bf773d  lib/lx_emul/virt_to_page.c
+f192359345464bbbfaa6f9e2707f397f6db3033f5b5fc1df59611e85fff896a2  lib/wifi/lx_user.c
