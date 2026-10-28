@@ -341,9 +341,39 @@ struct Driver::Acpm : private Noncopyable
 		}
 	};
 
+	/*
+	 * Supplies of the USB PHYs: LDO7M to LDO10M of the S2MPG12, switched in
+	 * LDO_CTRL1 with two mode bits each, 1 (on while awake) for LDO7M and
+	 * LDO8M and 3 (on) for LDO9M and LDO10M, as the vendor's device tree
+	 * sets them up. They stay on, the boot loader leaves them on as well.
+	 */
+	struct Usb_rails : Driver::Power
+	{
+		Acpm &_acpm;
+
+		enum { S2MPG12_LDO_CTRL1 = 0x48, LDO_CTRL1_ON = 0xf5, SETTLE_MS = 1 };
+
+		Usb_rails(Powers &powers, Acpm &acpm)
+		:
+			Driver::Power(powers, "usb-rails"), _acpm(acpm)
+		{ }
+
+		void _on() override
+		{
+			if (!_acpm._pmic_update(S2MPG12_LDO_CTRL1, LDO_CTRL1_ON, 0xff,
+			                        PMIC_CHANNEL))
+				Genode::warning("could not switch on the USB supplies");
+
+			_acpm._timer.msleep(SETTLE_MS);
+		}
+
+		void _off() override { }
+	};
+
 	Timer::Connection _timer { _env };
 
 	Touch_power _touch_power { _powers, *this };
+	Usb_rails   _usb_rails   { _powers, *this };
 
 	Acpm(Genode::Env &env, Powers &powers) : _env(env), _powers(powers)
 	{

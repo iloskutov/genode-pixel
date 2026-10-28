@@ -8,7 +8,8 @@
  * 26 MHz oscillator. Only the clocks of the drivers of this repository are
  * described: the bus clocks of the PERIC1 block, the USI0 serial interface
  * in SPI mode (touchscreen), the USI13 serial interface in I2C mode (Type-C
- * controller), the UFS host controller, and PCIe channel 1 (WiFi).
+ * controller), the UFS host controller, PCIe channel 1 (WiFi), and the USB
+ * controller.
  */
 
 /*
@@ -271,6 +272,14 @@ struct Driver::Cmu : private Noncopyable
 	 * driver's 'dma-coherent' device-tree property expects.
 	 */
 	Fixed_clock _ufs_embd { _clocks, "ufs-embd", Clock::Rate { 177664000 } };
+
+	/*
+	 * USB controller and its PHYs. CMU_HSI0 is left as the boot loader set
+	 * it up for its own USB stack. The PHY's reference clock runs at 19.2
+	 * MHz, the link clock is only named, as the vendor's drivers ask for it.
+	 */
+	Fixed_clock _usb20_ref { _clocks, "usb20-ref", Clock::Rate { 19200000 } };
+	Fixed_clock _usb_link  { _clocks, "usb-link",  Clock::Rate { 0 } };
 
 	Sysreg_bits _ufs_iocc { _clocks, "ufs-iocc",
 	                        _sysreg_hsi2.range_at(UFS_IOCC_OFFSET),

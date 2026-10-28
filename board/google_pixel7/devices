@@ -130,6 +130,32 @@ devices
   + clock ufs-embd | driver_name: UFS_EMBD
   + clock ufs-iocc
 
++ device usb | type: samsung,exynos9-dwusb
+  .
+  . USB controller of the HSI0 block (DWC_usb31, the DT node usb@11210000
+  . and its dwc3 child), used in device mode
+  .
+  + io_mem | address: 0x11210000 | size: 0x10000 | . DWC3
+  + irq    | number: 411
+  + power-domain usb-rails
+  + power-domain usb-power
+
++ device usb_phy | type: samsung,exynos-usbdrd-phy
+  .
+  . PHYs of the USB controller (phy@11200000): the USB 2.0/3.1 PHY and the
+  . USBDP combo PHY, a device of its own as the PHY driver looks up its
+  . clocks by its device-tree node
+  .
+  + io_mem | address: 0x11200000 | size: 0x200  | . USB 2.0/3.1 PHY
+  + io_mem | address: 0x110f0000 | size: 0x2800 | . USBDP combo PHY
+  + io_mem | address: 0x11100000 | size: 0x800  | . PHY control
+  + irq    | number: 408 | . USB 2.0 remote wakeup
+  + irq    | number: 406 | . USB 2.0 remote connect
+  + clock usb20-ref | driver_name: phy_ref
+  + clock usb-link  | driver_name: aclk
+  + power-domain usb-rails
+  + power-domain usb-power
+
 + device pcie1 | type: samsung,exynos-pcie-rc
   .
   . PCIe channel 1 of the HSI2 block (pcie@14520000), the link to the WiFi

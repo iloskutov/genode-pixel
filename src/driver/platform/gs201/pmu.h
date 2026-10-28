@@ -4,7 +4,7 @@
  * \date   2026-02-08
  *
  * The register offsets of the domains are taken from the vendor's device
- * tree for the GS201 (nodes pd-disp and pd-dpu).
+ * tree for the GS201 (nodes pd-disp, pd-dpu, and pd-hsi0).
  */
 
 /*
@@ -87,6 +87,7 @@ struct Driver::Pmu : private Noncopyable
 		PMU_SIZE = 0x4000,
 
 		/* offsets of the power domains within the register block */
+		PD_HSI0_OFFSET = 0x2080,
 		PD_DPU_OFFSET  = 0x2200,
 		PD_DISP_OFFSET = 0x2280,
 	};
@@ -98,6 +99,14 @@ struct Driver::Pmu : private Noncopyable
 	                           _pmu.range_at(PD_DISP_OFFSET), nullptr };
 	Power_domain _dpu_power  { _powers, "dpu-power",
 	                           _pmu.range_at(PD_DPU_OFFSET), &_disp_power };
+
+	/*
+	 * USB controller and PHYs: pd_hsi0, left on by the boot loader. On
+	 * the phone, switching it off ended in an SError, so it stays on, as
+	 * all domains here.
+	 */
+	Power_domain _usb_power  { _powers, "usb-power",
+	                           _pmu.range_at(PD_HSI0_OFFSET), nullptr };
 
 	Pmu(Genode::Env &env, Powers &powers) : _env(env), _powers(powers) { }
 };
