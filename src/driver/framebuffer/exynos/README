@@ -1,0 +1,10 @@
+Framebuffer driver for the display of the Google Pixel 7
+
+The driver 'exynos_fb' is a port of the vendor's Linux display driver
+(exynos-drm) and panel driver. It takes over the display pipeline as set up
+by the boot loader. It needs the ports 'pixel_linux', 'google_display', and
+'google_soc_gs'.
+
+The scenario 'run/exynos_fb_pixel' shows a test pattern on the display:
+
+! make run/exynos_fb_pixel KERNEL=hw BOARD=google_pixel7

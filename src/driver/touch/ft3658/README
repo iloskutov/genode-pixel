@@ -1,0 +1,10 @@
+Touchscreen driver for the Google Pixel 7
+
+The driver 'ft3658_touch' is a port of the vendor's Linux driver for the
+FocalTech FT3658U touchscreen, attached via the vendor's SPI controller
+driver. It provides the touches as an Event session. It needs the ports
+'pixel_linux', 'google_soc_gs', 'google_touch', and 'google_display'.
+
+The scenario 'run/ft3658_touch_pixel' logs the touches via 'event_dump':
+
+! make run/ft3658_touch_pixel KERNEL=hw BOARD=google_pixel7

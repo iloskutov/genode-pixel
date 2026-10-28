@@ -4,9 +4,9 @@ This repository contains
 
 * the board support for the base-hw kernel,
 * the run-tool plugin that packages a Genode image as an Android boot image,
-* the platform driver and the pin driver for the GS201 SoC, and
-* the framebuffer driver for the display, a port of the vendor's Linux
-  driver.
+  and
+* the drivers for the phone, native Genode drivers for the GS201 SoC and
+  ports of the vendor's Linux drivers.
 
 Documentation
 -------------
@@ -46,18 +46,12 @@ The drivers additionally need the repositories 'libports' and 'dde_linux',
 which are enabled by uncommenting their 'REPOSITORIES' lines in the same
 file.
 
-Download the mkbootimg and avbtool utilities, which are used by the image
-plugin and provided by a port:
+The image plugin and the drivers are built from third-party code provided by
+ports. The kernel is a large download. The build names any missing port
+together with the 'prepare_port' command that downloads it.
 
-! tool/ports/prepare_port android_boot_tools
-
-The Linux-based drivers are built from third-party sources, which are
-provided by ports as well. The kernel is a large download. The device tree
-of a driver is compiled by the 'dtc' tool, which must be installed on the
-host.
-
-! tool/ports/prepare_port pixel_linux jitterentropy google_display \
-!                         google_soc_gs
+The device tree of a driver is compiled by the 'dtc' tool, which must be
+installed on the host.
 
 Build a scenario, e.g., 'run/log'. The result is the Android boot image
 'var/run/<scenario>.img' within the build directory:
@@ -74,8 +68,8 @@ the image without flashing it:
 
 The output of Genode appears at the debug UART of the phone (115200 baud).
 
-The framebuffer driver can be tested with the scenario 'run/exynos_fb_pixel',
-which shows a test pattern on the display.
+Each driver has a README in its directory under 'src/driver', which names
+the scenario that tests it.
 
 The Linux-based drivers combine Genode's device-driver environment for
 Linux with files of this repository that fit the 6.1 kernel of the phone,

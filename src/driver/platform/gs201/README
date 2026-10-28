@@ -1,0 +1,9 @@
+Platform driver for the GS201 SoC of the Google Pixel 7
+
+The driver 'gs201_platform' hands out the devices of the devices ROM
+(board/google_pixel7/devices) to the other drivers. It switches the power
+domains, clocks, and supplies that the devices name, the supplies via the
+power-management firmware (ACPM).
+
+It is part of every driver scenario of this repository, e.g.,
+'run/exynos_fb_pixel'.

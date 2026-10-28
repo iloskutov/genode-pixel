@@ -1,0 +1,8 @@
+Driver for the hardware keys of the Google Pixel 7
+
+The driver 'gs201_keys' reports the power key and the volume keys, which
+are GPIO lines provided by 'gs201_pio', as an Event session.
+
+The scenario 'run/keys_pixel' logs the keys via 'event_dump':
+
+! make run/keys_pixel KERNEL=hw BOARD=google_pixel7

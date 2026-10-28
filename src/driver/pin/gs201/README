@@ -1,0 +1,8 @@
+Pin driver for the GS201 SoC of the Google Pixel 7
+
+The driver 'gs201_pio' provides the GPIO lines and pin interrupts of the
+GPIO controllers in the devices ROM as Pin_state, Pin_control, and IRQ
+sessions, and configures pins as listed in its configuration.
+
+It is part of the scenarios 'run/exynos_fb_pixel', 'run/ft3658_touch_pixel',
+and 'run/keys_pixel'.
