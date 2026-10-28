@@ -93,10 +93,19 @@ LX_ENABLE += SOUND SND SND_SOC SND_SOC_CS35L41_SPI SND_DYNAMIC_MINORS
 #
 LX_ENABLE += MAILBOX VIRTIO_MENU VIRTIO_MMIO
 
+#
+# USB device mode: UDC core and the DWC3 controller in gadget mode, the
+# host stack stays off. USB_LIBCOMPOSITE stays off as it selects
+# CONFIGFS_FS and thereby SYSFS, which the emulation of the other drivers
+# leaves out. The USB driver compiles the composite framework directly.
+# The vendor's PHY driver learns the cable orientation via EXTCON.
+#
+LX_ENABLE += USB_SUPPORT USB_GADGET USB_DWC3 USB_DWC3_GADGET EXTCON
+
 # slim down kernel by removing superfluous drivers
 LX_DISABLE += VGA_CONSOLE DUMMY_CONSOLE NLS VGA_ARB DEBUG_LIST
 LX_DISABLE += INPUT_KEYBOARD INPUT_MOUSE ETHERNET
-LX_DISABLE += USB USB_SUPPORT
+LX_DISABLE += USB
 LX_DISABLE += IPV6
 LX_DISABLE += MAC80211
 
