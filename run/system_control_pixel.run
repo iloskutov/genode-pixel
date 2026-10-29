@@ -1,0 +1,38 @@
+#
+# System-control interface of core on the Google Pixel 7
+#
+# 'test-system_control' issues read-only SMCs through the PD session's
+# system-control capability, which core hands out to components started
+# with 'managing_system: yes': the standard service's call UID (Arm's UUID
+# in w0..w3) and Trusty's version string. It logs "PASS" if the UID matches
+# and every character of the string arrived.
+#
+
+assert {[have_board google_pixel7]}
+
+build {
+	core init lib/ld
+	test/system_control
+}
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start test-system_control | managing_system: yes
+  + route | + any-service | + parent
+-
+}
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
