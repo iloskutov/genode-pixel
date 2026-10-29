@@ -1,0 +1,145 @@
+Audio driver for the Google Pixel 7
+
+All audio of the phone hangs behind the AoC ("always-on compute") DSP. The
+driver 'pixel_audio' starts the AoC through the security chip (GSA) and
+Trusty, registers the AoC's sound card with the two CS35L41 speaker
+amplifiers on SPI7 as its codecs, and connects the card to Genode's audio
+sessions. It is a port of the vendor's Linux drivers: the Trusty client
+(SMC core, virtio transport, TIPC), the GSA client, the AoC core with its
+mailboxes, ALSA and ASoC with the AoC's machine driver 'aoc_alsa' (without
+compress offload, in-call, VoIP, USB, and DisplayPort), and Google's forks
+of the CS35L41 codec driver and of wm_adsp on the vendor's SPI driver. It
+needs the ports 'pixel_linux', 'google_soc_gs', 'google_trusty',
+'google_aoc', and 'google_amplifiers'.
+
+The driver plays the Record sessions "left" and "right" on the playback
+PCM named by its config, feeds the Play sessions "mic_left" and
+"mic_right" from the capture PCM, applies the mixer settings of the
+config, and reports all mixer controls ("mixer").
+
+Trusty is entered with SMCs through core's system-control interface, so
+the driver must be started with 'managing_system: yes'. All SMCs are
+issued by one entrypoint, the component must keep its CPU (no affinity
+change): a standard call to Trusty and its restart have to come from the
+same CPU. Trusty asks for CPU time by a doorbell interrupt (SGI 13), which
+cannot reach a component; a thread of the driver enters Trusty
+periodically instead. The GSA reads the AoC firmware through its stage-2
+protection unit (S2MPU), which the boot loader leaves without access; the
+driver opens it for all memory, as pKVM does on Android, around the
+authentication of the firmware.
+
+
+Bring-up
+~~~~~~~~
+
+The devices are probed one after the other. The bring-up always runs
+completely, up to the first failure. Each stage logs one result line:
+
+! pixel_audio: stage <name> ok: ...
+! pixel_audio: stage <name> FAILED: ... <raw return values>
+
+:smc:   Fast calls to Trusty: version string, API version.
+:gsa:   Probe of the GSA mailbox, one read-only command (SJTAG status).
+:tipc:  Probe of the Trusty core and its virtio/TIPC transport, the AoC
+        state from the GSA hardware manager.
+:load:  Probe of the AoC mailboxes and the AoC core, firmware load
+        ('aoc.bin'), authentication by the GSA.
+:start: The AoC is started; the stage waits for it to come online.
+:card:  Probe of SPI7 and the two amplifiers (logged as stage 'amp'), then
+        the sound card.
+:mixer: All controls of the card are listed and read once, the result is
+        the report "mixer".
+:play:  The Record sessions are opened and the card task is started, which
+        applies the config and feeds the playback PCM. The stage does not
+        wait for it.
+
+Each applied config logs its own line (see "Configuration"). When the playback
+PCM has consumed four periods for the first time, the driver logs
+"pixel_audio: playback: PCM <n> running: ...".
+
+A step that does not advance for 5 seconds is reported ("pixel_audio:
+still in step ..."): several waits of the vendor code have no timeout.
+
+
+Settings
+~~~~~~~~
+
+The ROM 'settings' holds what is fixed for a boot:
+
+! settings | aoc_log: no
+! + firmware aoc.bin | size: 21328448
+
+:online_timeout_ms: how long stage 'start' waits for the AoC (default 10000).
+:nop_poll_ms:       period of the entries into Trusty (default 200).
+:verbose:           log every control write (default 'no').
+:aoc_log:           forward the log of the AoC firmware (default 'no'):
+                    each line of its service "logging" is printed as
+                    "pixel_audio: AOC: <line>", at most 'aoc_log_rate' lines
+                    per second after a burst of 'aoc_log_burst' (defaults 20
+                    and 300). 'aoc_log_replies' prints the replies of the
+                    commands that succeeded too. A line blocks the driver
+                    for the time it takes on the serial line (about 10 ms).
+
+A 'firmware' node gives the exact size of a firmware image, a ROM
+dataspace is page-rounded.
+
+
+Configuration
+~~~~~~~~~~~~~
+
+The ROM 'config' is the mixer policy, it can change at run time:
+
+! config | route: media
+! + default Out Format | value: S16_LE
+! + control Audio DSP Mode | value: Ambient
+! + control PCM Source | value: ASP
+! + playback | pcm: 1 | enabled: yes
+
+* 'default' nodes are the initial values of controls, written once with
+  the first config, unless a control has the value already.
+
+* 'control' nodes are writes by control name, in order. The value is an
+  integer, a space-separated list of integers (one per element), or the
+  text of an enum item; 'index' writes one element. A control the previous
+  config wrote and the new one does not name is set back to its default.
+
+* A 'stream' node opens and prepares a PCM (48 kHz, stereo, 16 bit), which
+  makes the AoC set up the stream, without data. A 'tuning' node is sent
+  to the AoC service 'audio_output_tuning'.
+
+* 'playback' and 'capture' name the PCMs of the sessions. The playback PCM
+  is opened when the Record sessions deliver samples and closed when they
+  are depleted, so that the amplifiers power down in between. The capture
+  PCM runs while its node is enabled.
+
+An unknown control or a failing write is logged as a warning and skipped.
+Each applied config is summarized in one line ("pixel_audio: config N
+applied: ...").
+
+
+Sessions and ROMs
+~~~~~~~~~~~~~~~~~
+
+Platform and Dma (devices 'gsa', 's2mpu_gsa', 'aoc', 'aoc_mbox0' to
+'aoc_mbox2', 'spi7'), Pin_control, Pin_state, and IRQ of gs201_pio (chip
+selects 'gpp14-3' and 'gpp22-1', resets 'gpp17-1' and 'gpp25-2',
+interrupts '79' and '94'), Timer, Record, Play, Report ('mixer'), and the
+ROMs 'dtb' (built with the driver), 'settings', 'config', 'aoc.bin', and
+the amplifiers' firmware 'cs35l41-dsp1-spk-prot.wmfw',
+'cs35l41-dsp1-spk-prot.bin', 'R-cs35l41-dsp1-spk-prot.bin'. The firmware is
+not part of Genode; without the amplifiers' firmware they play only with
+'PCM Source' = ASP. Sessions are opened when a stage needs them.
+
+The value rules of the config have host tests:
+
+! make -C repos/pixel/src/driver/audio/pixel/test
+
+The tool 'tool/pull_audio_firmware' copies the firmware and the vendor's
+mixer paths from a phone running Android into the tar archive
+'contrib/pixel_audio_firmware.tar'. The scenario 'run/audio_pixel' plays a
+sine tone, or the WAV file named by WAV, on the loudspeakers, with a config
+for media without speaker protection that 'tool/audio_speaker_config'
+generates from the mixer paths:
+
+! repos/pixel/tool/pull_audio_firmware
+! make run/audio_pixel KERNEL=hw BOARD=google_pixel7 [WAV=<file>]

@@ -1,0 +1,1497 @@
+/dts-v1/;
+
+/*
+ * \brief  Device tree of the audio driver of the Google Pixel 7
+ * \author Ivan Loskutov
+ * \date   2026-10-29
+ *
+ * The tree describes what the audio driver needs: the Trusty client, the
+ * non-secure mailbox of the security chip (GSA) and the register range of
+ * the GSA's S2MPU, the always-on compute (AoC) with its SysMMU, IOMMU
+ * group, DRAM and three mailboxes, the AoC's sound card with its ALSA
+ * platforms and routing component, the SPI controller of USI7 with the two
+ * CS35L41 speaker amplifiers, the GPIO banks of the amplifiers' chip
+ * selects, resets, and interrupts, and the interrupt controller. The values
+ * are those of the vendor's device tree for the phone (gs201-panther), with
+ * these changes:
+ *
+ * - Trusty keeps only its 'virtio' child. The component has no driver for
+ *   the 'irq' and 'log' children and uses none of the DMA heaps.
+ * - The GSA node is without its GSC child and without its 's2mpu'
+ *   reference, which only pKVM uses.
+ * - The AoC node has the additional property 'skip-monitor-online-reset':
+ *   the AoC is not restarted when it does not answer within 5 seconds.
+ * - The AoC node is without its pin-control states: the component has no
+ *   pin controller for them.
+ * - The SPI controller runs in CPU mode (FIFO): 'dma-names' is left out
+ *   ('dmas' and 'dma-mode' are absent in the vendor's tree already).
+ * - The SPI controller and the amplifiers are without their clocks, the
+ *   USI system register, and their pin-control states: the platform driver
+ *   switches the clocks and sets the USI to SPI, the pin driver configures
+ *   the pins. A reference to a node without a driver would make the driver
+ *   core defer the probe forever.
+ * - The amplifiers' SPI clock is 3.25 MHz instead of 25 MHz, the rate the
+ *   bus really has: the platform feeds the controller with OSCCLK/2 =
+ *   13 MHz, the controller divides it by 4, and the driver cannot change
+ *   the rate of the clock.
+ * - The sound card keeps its 33 front-end links in their order: the PCM
+ *   numbers are the link order, and the AoC's ALSA driver relies on them.
+ *   The links of the platforms that the component does not have (compress
+ *   offload, VoIP, in-call) use the plain PCM platform instead.
+ * - The haptics back end is without its CS40L26 codec and falls back to
+ *   the dummy codec: the component has no driver for the CS40L26, and the
+ *   card would never register.
+ * - The aliases name SPI7 only.
+ *
+ * The AoC's SysMMU has no driver in the component, but its node must stay
+ * enabled: the AoC driver reads the node through 'iommus', and disabled
+ * nodes are not unflattened.
+ *
+ * Nodes that the nodes above reference, but that no driver of the
+ * component reads, are kept only as far as the references need them: the
+ * two PMICs named by the first AoC mailbox ('main-pmic', 'sub-pmic') with
+ * the three regulators that supply the AoC's sensors and the amplifiers,
+ * the amplifiers' fixed dummy supply,
+ * and the I2C controller of USI7 with the CS40L26 and its codec node, which
+ * the sound card's clock list names. The regulators and the codec node keep
+ * their properties, the PMICs, the I2C controller, and the CS40L26 keep only
+ * compatible, reg, and status. The four regulators are disabled: they
+ * have no driver here (the platform driver switches the rails, the
+ * regulator calls of the drivers are stubs), and a supply without a device
+ * made the driver core defer the probe of the AoC and of the amplifiers
+ * forever. A disabled node is not unflattened, so the supply references
+ * lead nowhere. Left out are the other reserved-memory regions, the other
+ * GPIO banks, all pin states, and all nodes of the vendor's tree that
+ * nothing of the above references.
+ */
+
+/*
+ * SPDX-License-Identifier: GPL-2.0
+ */
+
+/ {
+	model = "GS201 PANTHER MP based on GS201";
+	#address-cells = <2>;
+	#size-cells = <1>;
+	compatible = "google,GS201 PANTHER", "google,GS201";
+	interrupt-parent = <&gic>;
+
+	/* the SPI driver takes the controller's number from the alias */
+	aliases {
+		spi7 = &spi_7;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		/* the AoC DRAM, the only region the component uses */
+		aoc_reserve: aoc@94000000 {
+			reg = <0 0x94000000 0x3000000>;
+			no-map;
+		};
+	};
+
+	trusty {
+		compatible = "android,trusty-smc-v1";
+
+		virtio {
+			compatible = "android,trusty-virtio-v1";
+		};
+	};
+
+	pinctrl@180E0000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x180e0000 0x1000>;
+		interrupts = <0 0x2c 4>, <0 0x2d 4>, <0 0x2e 4>, <0 0x2f 4>,
+		             <0 0x30 4>, <0 0x31 4>, <0 0x32 4>, <0 0x33 4>,
+		             <0 0x34 4>, <0 0x35 4>, <0 0x36 4>, <0 0x37 4>,
+		             <0 0x38 4>, <0 0x39 4>, <0 0x3a 4>, <0 0x3b 4>,
+		             <0 0x3c 4>, <0 0x3d 4>, <0 0x3e 4>, <0 0x3f 4>,
+		             <0 0x40 4>, <0 0x41 4>;
+
+		/* pin 3: interrupt of the left amplifier */
+		gpa6: gpa6 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 0x2c 4>,
+			             <0 0x2d 4>,
+			             <0 0x2e 4>,
+			             <0 0x2f 4>,
+			             <0 0x30 4>,
+			             <0 0x31 4>,
+			             <0 0x32 4>,
+			             <0 0x33 4>;
+		};
+
+		/* pin 6: interrupt of the right amplifier */
+		gpa8: gpa8 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 0x38 4>,
+			             <0 0x39 4>,
+			             <0 0x3a 4>,
+			             <0 0x3b 4>,
+			             <0 0x3c 4>,
+			             <0 0x3d 4>,
+			             <0 0x3e 4>,
+			             <0 0x3f 4>;
+		};
+	};
+
+	pinctrl@10840000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x10840000 0x1000>;
+		interrupts = <0 0x298 4>;
+
+		/* pin 3: chip select of the left amplifier */
+		gpp14: gpp14 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+
+		/* pin 1: reset line of the left amplifier */
+		gpp17: gpp17 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+
+	};
+
+	pinctrl@10C40000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x10c40000 0x1000>;
+		interrupts = <0 0x2ab 4>;
+
+		/* pin 1: chip select of the right amplifier */
+		gpp22: gpp22 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+
+		/* pin 2: reset line of the right amplifier */
+		gpp25: gpp25 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+	};
+
+	iommu_group_aoc: iommu_group_aoc {
+		compatible = "samsung,sysmmu-group";
+	};
+
+	/* no driver, but must stay enabled (see above) */
+	sysmmu_asoc: sysmmu@1A090000 {
+		compatible = "samsung,sysmmu-v8";
+		reg = <0 0x1a090000 0x10000>;
+		interrupts = <0 0x76 4>,
+		             <0 0x77 4>;
+		qos = <0x0f>;
+		sysmmu,secure-irq;
+		sysmmu,secure_base = <0x1a0a0000>;
+		port-name = "ASOC";
+		#iommu-cells = <0>;
+		sysmmu,default_tlb = <0x0a>;
+		sysmmu,tlb_property = <1 0x0a 0x300 0x300010>,
+		                      <2 0x0a 0x300 0x3c0008>,
+		                      <3 0x0a 0x300 0x3c000c>,
+		                      <4 0x0a 0x300 0x3c0000>;
+	};
+
+	mbox_aoc: mbox@176a0000 {
+		acpm-ipc-channel = <2>;
+		sub-pmic = <&s2mpg13>;
+		main-pmic = <&s2mpg12>;
+		compatible = "google,mailbox-whitechapel";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		reg = <0 0x18300000 0x1000>;
+		interrupts = <0 0x4b 4>;
+		mbox-name = "aoc2ap";
+		#mbox-cells = <1>;
+		wc-mbox-non-wake-channels = <0x7000>;
+	};
+
+	mbox_aoc_f1: mbox@18320000 {
+		compatible = "google,mailbox-whitechapel";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		reg = <0 0x18320000 0x1000>;
+		interrupts = <0 0x4c 4>;
+		mbox-name = "aoc_f1_ap";
+		#mbox-cells = <1>;
+		wc-mbox-non-wake-channels = <0xf000>;
+	};
+
+	mbox_aoc_p6: mbox@18340000 {
+		compatible = "google,mailbox-whitechapel";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		reg = <0 0x18340000 0x1000>;
+		interrupts = <0 0x4d 4>;
+		mbox-name = "aoc_p6_ap";
+		#mbox-cells = <1>;
+		wc-mbox-non-wake-channels = <0xf000>;
+	};
+
+	aoc@19000000 {
+		aoc-board-rev = <0x10000>;
+		aoc-board-id = <0x30401>;
+		aoc-board-cfg = "P10";
+		sensor_power_list = "sensor_1v8", "sensor_3v3";
+		sensor_3v3-supply = <&s2mpg13_ldo5>;
+		sensor_1v8-supply = <&s2mpg13_ldo7>;
+		compatible = "google,aoc";
+		reg = <0 0x19000000 0x1000000>,
+		      <0 0x181d0000 0x1000>,
+		      <0 0x1a0b0000 0x1000>,
+		      <0 0x1a060000 0x5000>;
+		reg-names = "blk_aoc", "aoc_req", "aoc_s2mpu", "ssmt_aoc";
+		interrupts = <0 0x74 4>;
+		interrupt-names = "watchdog";
+		gsa-enabled = "true";
+		iommus = <&sysmmu_asoc>;
+		memory-region = <&aoc_reserve>;
+		samsung,iommu-group = <&iommu_group_aoc>;
+		mbox-channels = <0x30>;
+		mbox-names = "aoc2ap", "aoc_f1_ap";
+		mboxes = <&mbox_aoc 0>, <&mbox_aoc 1>, <&mbox_aoc 2>,
+		         <&mbox_aoc 3>, <&mbox_aoc 4>, <&mbox_aoc 5>,
+		         <&mbox_aoc 6>, <&mbox_aoc 7>, <&mbox_aoc 8>,
+		         <&mbox_aoc 9>, <&mbox_aoc 10>, <&mbox_aoc 11>,
+		         <&mbox_aoc 12>, <&mbox_aoc 13>, <&mbox_aoc 14>,
+		         <&mbox_aoc 15>, <&mbox_aoc_f1 0>, <&mbox_aoc_f1 1>,
+		         <&mbox_aoc_f1 2>, <&mbox_aoc_f1 3>, <&mbox_aoc_f1 4>,
+		         <&mbox_aoc_f1 5>, <&mbox_aoc_f1 6>, <&mbox_aoc_f1 7>,
+		         <&mbox_aoc_f1 8>, <&mbox_aoc_f1 9>, <&mbox_aoc_f1 10>,
+		         <&mbox_aoc_f1 11>, <&mbox_aoc_f1 12>, <&mbox_aoc_f1 13>,
+		         <&mbox_aoc_f1 14>, <&mbox_aoc_f1 15>, <&mbox_aoc_p6 0>,
+		         <&mbox_aoc_p6 1>, <&mbox_aoc_p6 2>, <&mbox_aoc_p6 3>,
+		         <&mbox_aoc_p6 4>, <&mbox_aoc_p6 5>, <&mbox_aoc_p6 6>,
+		         <&mbox_aoc_p6 7>, <&mbox_aoc_p6 8>, <&mbox_aoc_p6 9>,
+		         <&mbox_aoc_p6 10>, <&mbox_aoc_p6 11>, <&mbox_aoc_p6 12>,
+		         <&mbox_aoc_p6 13>, <&mbox_aoc_p6 14>, <&mbox_aoc_p6 15>;
+		acpm-ipc-channel = <0x0d>;
+		force-vnom = <0>;
+		gsa-device = <&gsa>;
+		pcu-base = <0xa00000>;
+		gpio-base = <0xd70000>;
+		pcu-db-set-offset = <0xd004>;
+		pcu-db-clr-offset = <0xd008>;
+		cp-aperture-start-offset = <0x7fdf80>;
+		cp-aperture-end-offset = <0x7fffff>;
+		clock-divider = <1>;
+		channel-max-pending-msgs = <0x80>;
+		block-channel-threshold = <0x40>;
+		notify-on-state-transition = "true";
+		hotword-supported = "true";
+		chre-supported = "true";
+		/* not in the vendor's tree */
+		skip-monitor-online-reset;
+	};
+
+	V_SYS_dummy: cs35l41_dummy_regulator@0 {
+		compatible = "regulator-fixed";
+		regulator-name = "V_SYS_DUMMY";
+		status = "disabled";
+		regulator-min-microvolt = <4200000>;
+		regulator-max-microvolt = <4200000>;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	aoc_pcm_ep: aoc_pcm_drv {
+		compatible = "google-aoc-snd-pcm";
+	};
+
+	aoc_voice_ep: aoc_voice_drv {
+		compatible = "google-aoc-snd-voice";
+	};
+
+	aud_aoc_path: aoc_path {
+		#sound-dai-cells = <1>;
+		compatible = "google-aoc-path";
+	};
+
+	aoc_nohost_drv: aoc_nohost {
+		compatible = "google-aoc-snd-nohost";
+	};
+
+	sound-aoc {
+		compatible = "google-aoc-snd-card";
+		aoc-card-name = "google,aoc-snd-card";
+
+		clks {
+			sys {
+				sys@cs35l41_r {
+					out_mul = <1>;
+					in_mul = <1>;
+					srcid = <0>;
+					id = <0>;
+					src = "BCLK";
+					comp = <&cs35l41_r>;
+				};
+
+				sys@cs35l41_l {
+					out_mul = <1>;
+					in_mul = <1>;
+					srcid = <0>;
+					id = <0>;
+					src = "BCLK";
+					comp = <&cs35l41_l>;
+				};
+
+				sys@cs40l26_codec {
+					out_mul = <1>;
+					in_mul = <1>;
+					srcid = <0>;
+					id = <0>;
+					src = "BCLK";
+					comp = <&cs40l26_codec>;
+				};
+			};
+		};
+
+		dai_link {
+			fe_ep1_rx {
+				dai-name = "audio_playback0";
+				stream-name = "EP1 playback";
+				id = <0>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep2_rx {
+				dai-name = "audio_playback1";
+				stream-name = "EP2 playback";
+				id = <1>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 1>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep3_rx {
+				dai-name = "audio_playback2";
+				stream-name = "EP3 playback";
+				id = <2>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 2>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep4_rx {
+				dai-name = "audio_playback3";
+				stream-name = "EP4 playback";
+				id = <3>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 3>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep5_rx {
+				dai-name = "audio_playback4";
+				stream-name = "EP5 playback";
+				id = <4>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 4>;
+				};
+
+				platform {
+					vorx {
+						of_drv = <&aoc_voice_ep>;
+					};
+				};
+			};
+
+			fe_ep6_rx {
+				dai-name = "audio_playback5";
+				stream-name = "EP6 playback";
+				id = <5>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 5>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep7_rx {
+				dai-name = "audio_playback6";
+				stream-name = "EP7 playback";
+				id = <6>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 6>;
+				};
+
+				platform {
+					rx1 {
+						/* vendor: aoc_compr_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep8_rx {
+				dai-name = "audio_haptics";
+				stream-name = "EP8 playback";
+				id = <7>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 7>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep1_tx {
+				dai-name = "audio_capture0";
+				stream-name = "EP1 capture";
+				id = <0x40000000>;
+				dynamic;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x40000000>;
+				};
+
+				platform {
+					tx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep2_tx {
+				dai-name = "audio_capture1";
+				stream-name = "EP2 capture";
+				id = <0x40000001>;
+				dynamic;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x40000001>;
+				};
+
+				platform {
+					tx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep3_tx {
+				dai-name = "audio_capture2";
+				stream-name = "EP3 capture";
+				id = <0x40000002>;
+				dynamic;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x40000002>;
+				};
+
+				platform {
+					tx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep4_tx {
+				dai-name = "audio_capture3";
+				stream-name = "EP4 capture";
+				id = <0x40000003>;
+				dynamic;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x40000003>;
+				};
+
+				platform {
+					votx {
+						of_drv = <&aoc_voice_ep>;
+					};
+				};
+			};
+
+			fe_ep5_tx {
+				dai-name = "ultrasonic_capture";
+				stream-name = "EP5 capture";
+				id = <0x40000004>;
+				dynamic;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x40000004>;
+				};
+
+				platform {
+					tx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ep6_tx {
+				dai-name = "audio_capture5";
+				stream-name = "EP6 capture";
+				id = <0x40000005>;
+				dynamic;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x40000005>;
+				};
+
+				platform {
+					tx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_nohost1_rx {
+				dai-name = "nohost1 playback";
+				stream-name = "nohost1 playback";
+				id = <0x20000008>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x20000008>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_nohost_drv>;
+					};
+				};
+			};
+
+			fe_nohost1_tx {
+				dai-name = "nohost1 capture";
+				stream-name = "nohost1 capture";
+				id = <0x60000008>;
+				dynamic;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x60000008>;
+				};
+
+				platform {
+					tx1 {
+						of_drv = <&aoc_nohost_drv>;
+					};
+				};
+			};
+
+			fe_voip_rx {
+				dai-name = "audio_voip_rx";
+				stream-name = "audio_voip_rx";
+				id = <0x0a>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x0a>;
+				};
+
+				platform {
+					rx1 {
+						/* vendor: aoc_voip_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_voip_tx {
+				dai-name = "audio_voip_tx";
+				stream-name = "audio_voip_tx";
+				id = <0x4000000a>;
+				dynamic;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x4000000a>;
+				};
+
+				platform {
+					tx1 {
+						/* vendor: aoc_voip_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_incall_pb0_rx {
+				dai-name = "audio_incall_pb_0";
+				stream-name = "audio_incall_pb_0";
+				id = <0x0b>;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x0b>;
+				};
+
+				platform {
+					rx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_incall_pb1_rx {
+				dai-name = "audio_incall_pb_1";
+				stream-name = "audio_incall_pb_1";
+				id = <0x0c>;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x0c>;
+				};
+
+				platform {
+					rx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_incall_cap0_tx {
+				dai-name = "audio_incall_cap_0";
+				stream-name = "audio_incall_cap_0";
+				id = <0x4000000d>;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x4000000d>;
+				};
+
+				platform {
+					tx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_incall_cap1_tx {
+				dai-name = "audio_incall_cap_1";
+				stream-name = "audio_incall_cap_1";
+				id = <0x4000000e>;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x4000000e>;
+				};
+
+				platform {
+					tx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_incall_cap2_tx {
+				dai-name = "audio_incall_cap_2";
+				stream-name = "audio_incall_cap_2";
+				id = <0x4000000f>;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x4000000f>;
+				};
+
+				platform {
+					tx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_raw_rx {
+				dai-name = "audio_raw";
+				stream-name = "audio_raw";
+				id = <9>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 9>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_haptic_nohost_rx {
+				dai-name = "haptic nohost playback";
+				stream-name = "haptic nohost playback";
+				id = <0x20000011>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x20000011>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_nohost_drv>;
+					};
+				};
+			};
+
+			fe_hifi_rx {
+				dai-name = "audio_hifiout";
+				stream-name = "audio_hifiout";
+				id = <0x10>;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x10>;
+				};
+
+				platform {
+					rx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_hifi_tx {
+				dai-name = "audio_hifiin";
+				stream-name = "audio_hifiin";
+				id = <0x40000010>;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x40000010>;
+				};
+
+				platform {
+					tx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_android_aec_tx {
+				dai-name = "audio_android_aec";
+				stream-name = "audio_android_aec";
+				id = <0x40000012>;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x40000012>;
+				};
+
+				platform {
+					tx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_us_rx {
+				dai-name = "audio_ultrasonic";
+				stream-name = "audio_ultrasonic";
+				id = <0x13>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x13>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_incall_pb2_rx {
+				dai-name = "audio_incall_pb_2";
+				stream-name = "audio_incall_pb_2";
+				id = <0x14>;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x14>;
+				};
+
+				platform {
+					rx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_ims_rx {
+				dai-name = "audio_immersive";
+				stream-name = "audio_immersive";
+				id = <0x15>;
+				dynamic;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x15>;
+				};
+
+				platform {
+					rx1 {
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_capture_inject_rx {
+				dai-name = "audio_capture_inject";
+				stream-name = "audio_capture_inject";
+				id = <0x16>;
+				playback;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x16>;
+				};
+
+				platform {
+					rx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			fe_hotword_tap_tx {
+				dai-name = "audio_hotword_tap";
+				stream-name = "audio_hotword_tap";
+				id = <0x40000017>;
+				capture;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x40000017>;
+				};
+
+				platform {
+					tx1 {
+						/* vendor: aoc_incall_drv */
+						of_drv = <&aoc_pcm_ep>;
+					};
+				};
+			};
+
+			be_i2s0_rx {
+				dai-name = "I2S_0_RX Playback";
+				stream-name = "I2S_0_RX Playback";
+				id = <0x80000000>;
+				playback;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x80000000>;
+				};
+
+				daifmt {
+					dai-format = "i2s";
+				};
+			};
+
+			be_i2s0_tx {
+				dai-name = "I2S_0_TX Capture";
+				stream-name = "I2S_0_TX Capture";
+				id = <0xc0000001>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc0000001>;
+				};
+
+				daifmt {
+					dai-format = "i2s";
+				};
+			};
+
+			be_i2s1_rx {
+				dai-name = "I2S_1_RX Playback";
+				stream-name = "I2S_1_RX Playback";
+				id = <0x80000002>;
+				playback;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x80000002>;
+				};
+
+				daifmt {
+					dai-format = "i2s";
+				};
+			};
+
+			be_i2s1_tx {
+				dai-name = "I2S_1_TX Capture";
+				stream-name = "I2S_1_TX Capture";
+				id = <0xc0000003>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc0000003>;
+				};
+
+				daifmt {
+					dai-format = "i2s";
+				};
+			};
+
+			be_i2s2_rx {
+				dai-name = "I2S_2_RX Playback";
+				stream-name = "I2S_2_RX Playback";
+				id = <0x80000004>;
+				playback;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x80000004>;
+				};
+
+				daifmt {
+					dai-format = "i2s";
+					bitclock-inversion;
+				};
+			};
+
+			be_i2s2_tx {
+				dai-name = "I2S_2_TX Capture";
+				stream-name = "I2S_2_TX Capture";
+				id = <0xc0000005>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc0000005>;
+				};
+
+				daifmt {
+					dai-format = "i2s";
+				};
+			};
+
+			be_tdm0_rx {
+				dai-name = "TDM_0_RX Playback";
+				stream-name = "TDM_0_RX Playback";
+				id = <0x80000006>;
+				playback;
+				no-pcm;
+				useops;
+				usefixup;
+
+				codec {
+					sound-dai = <&cs35l41_l 0>,
+					            <&cs35l41_r 0>;
+				};
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x80000006>;
+				};
+
+				daifmt {
+					dai-format = "dsp_a";
+				};
+			};
+
+			be_tdm0_tx {
+				dai-name = "TDM_0_TX Capture";
+				stream-name = "TDM_0_TX Capture";
+				id = <0xc0000007>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				codec {
+					sound-dai = <&cs35l41_l 0>,
+					            <&cs35l41_r 0>;
+				};
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc0000007>;
+				};
+
+				daifmt {
+					dai-format = "dsp_a";
+				};
+			};
+
+			be_tdm1_rx {
+				dai-name = "TDM_1_RX Playback";
+				stream-name = "TDM_1_RX Playback";
+				id = <0x80000008>;
+				playback;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x80000008>;
+				};
+
+				daifmt {
+					dai-format = "i2s";
+				};
+			};
+
+			be_tdm1_tx {
+				dai-name = "TDM_1_TX Capture";
+				stream-name = "TDM_1_TX Capture";
+				id = <0xc0000009>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc0000009>;
+				};
+
+				daifmt {
+					dai-format = "i2s";
+				};
+			};
+
+			be_internal_mic_tx {
+				dai-name = "INTERNAL_MIC_TX Capture";
+				stream-name = "INTERNAL_MIC_TX Capture";
+				id = <0xc000000a>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc000000a>;
+				};
+			};
+
+			be_internal_mic_us_tx {
+				dai-name = "INTERNAL_MIC_US_TX Capture";
+				stream-name = "INTERNAL_MIC_US_TX Capture";
+				id = <0xc0000013>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc0000013>;
+				};
+			};
+
+			be_bt_rx {
+				dai-name = "BT_RX Playback";
+				stream-name = "BT_RX Playback";
+				id = <0x8000000b>;
+				playback;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x8000000b>;
+				};
+			};
+
+			be_bt_tx {
+				dai-name = "BT_TX Capture";
+				stream-name = "BT_TX Capture";
+				id = <0xc000000c>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc000000c>;
+				};
+			};
+
+			be_usb_rx {
+				dai-name = "USB_RX Playback";
+				stream-name = "USB_RX Playback";
+				id = <0x8000000d>;
+				playback;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x8000000d>;
+				};
+			};
+
+			be_usb_tx {
+				dai-name = "USB_TX Capture";
+				stream-name = "USB_TX Capture";
+				id = <0xc000000e>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc000000e>;
+				};
+			};
+
+			be_incall_rx {
+				dai-name = "INCALL_RX Playback";
+				stream-name = "INCALL_RX Playback";
+				id = <0x8000000f>;
+				playback;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0x8000000f>;
+				};
+			};
+
+			be_incall_tx {
+				dai-name = "INCALL_TX Capture";
+				stream-name = "INCALL_TX Capture";
+				id = <0xc0000010>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc0000010>;
+				};
+			};
+
+			be_haptic_rx {
+				dai-name = "HAPTIC_RX Playback";
+				stream-name = "HAPTIC_RX Playback";
+				id = <0x80000011>;
+				playback;
+				no-pcm;
+				useops;
+				usefixup;
+
+				/* no codec: the dummy codec (see above) */
+				cpu {
+					sound-dai = <&aud_aoc_path 0x80000011>;
+				};
+
+				daifmt {
+					dai-format = "dsp_a";
+				};
+			};
+
+			be_eraser_tx {
+				dai-name = "ERASER_TX Capture";
+				stream-name = "ERASER_TX Capture";
+				id = <0xc0000012>;
+				capture;
+				no-pcm;
+				useops;
+				usefixup;
+
+				cpu {
+					sound-dai = <&aud_aoc_path 0xc0000012>;
+				};
+			};
+		};
+	};
+
+	gsa: gsa-ns {
+		compatible = "google,gs101-gsa-v1";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		reg = <0 0x17c90000 0x1000>;
+		interrupts = <0 0x16b 4>;
+	};
+
+	/* reduced to the path of the CS40L26 codec (see above) */
+	hsi2c@10970000 {
+		compatible = "samsung,exynos5-hsi2c";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0 0x10970000 0x1000>;
+		status = "ok";
+
+		cs40l26a@43 {
+			status = "okay";
+			reg = <0x43>;
+			compatible = "cirrus,cs40l26a";
+
+			cs40l26_codec: cs40l26_codec@snd {
+				status = "okay";
+				compatible = "cs40l26-codec";
+				#sound-dai-cells = <1>;
+			};
+		};
+	};
+
+	/* CPU mode (FIFO): without 'dma-names' (see above) */
+	spi_7: spi@10960000 {
+		cs-gpios = <&gpp14 3 0>,
+		           <&gpp22 1 0>;
+		compatible = "samsung,exynos-spi";
+		samsung,spi-fifosize = <0x40>;
+		swap-mode;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		clock-names = "ipclk_spi", "gate_spi_clk";
+		interrupts = <0 0x2a8 4>;
+		samsung,usi-offset = <0x18>;
+		reg = <0 0x10960000 0x1000>;
+		status = "okay";
+
+		cs35l41_r: cs35l41@1 {
+			cirrus,right-channel-amp;
+			cirrus,hibernate-enable;
+			cirrus,hw-noise-gate-select = <0x3f>;
+			cirrus,tuning-has-prefix;
+			cirrus,asp-sdout-hiz = <3>;
+			cirrus,boost-cap-microfarad = <0x1e>;
+			cirrus,boost-ind-nanohenry = <0x3e8>;
+			cirrus,boost-peak-milliamp = <0xdac>;
+			VP-supply = <&V_SYS_dummy>;
+			VA-supply = <&s2mpg13_bucka>;
+			reset-gpios = <&gpp25 2 0>;
+			interrupts = <6 0 0>;
+			interrupt-parent = <&gpa8>;
+			status = "okay";
+			reg = <1>;
+			spi-max-frequency = <3250000>;  /* vendor: 25 MHz */
+			compatible = "cirrus,cs35l41";
+			sound-name-prefix = "R";
+			#sound-dai-cells = <1>;
+
+			controller-data {
+				samsung,spi-chip-select-mode = <1>;
+				samsung,spi-feedback-delay = <1>;
+				cs-gpio = <&gpp22 1 0>;
+			};
+
+			cirrus,gpio-config2 {
+				cirrus,gpio-output-enable;
+				cirrus,gpio-src-select = <5>;
+			};
+		};
+
+		cs35l41_l: cs35l41@0 {
+			cirrus,hibernate-enable;
+			cirrus,hw-noise-gate-select = <0x3f>;
+			cirrus,tuning-has-prefix;
+			cirrus,asp-sdout-hiz = <3>;
+			cirrus,boost-cap-microfarad = <0x1e>;
+			cirrus,boost-ind-nanohenry = <0x3e8>;
+			cirrus,boost-peak-milliamp = <0xdac>;
+			VP-supply = <&V_SYS_dummy>;
+			VA-supply = <&s2mpg13_bucka>;
+			reset-gpios = <&gpp17 1 0>;
+			interrupts = <3 0 0>;
+			interrupt-parent = <&gpa6>;
+			status = "okay";
+			reg = <0>;
+			spi-max-frequency = <3250000>;  /* vendor: 25 MHz */
+			compatible = "cirrus,cs35l41";
+			#sound-dai-cells = <1>;
+
+			controller-data {
+				samsung,spi-chip-select-mode = <1>;
+				samsung,spi-feedback-delay = <1>;
+				cs-gpio = <&gpp14 3 0>;
+			};
+
+			cirrus,gpio-config2 {
+				cirrus,gpio-output-enable;
+				cirrus,gpio-src-select = <5>;
+			};
+		};
+	};
+
+	s2mpu_gsa@17c60000 {
+		compatible = "google,s2mpu";
+		reg = <0 0x17c60000 0x10000>;
+		interrupts = <0 0x16e 4>;
+		off-at-boot;
+	};
+
+	gic: interrupt-controller@10400000 {
+		compatible = "arm,gic-v3";
+		#interrupt-cells = <3>;
+		interrupt-controller;
+		reg = <0 0x10400000 0x10000>,
+		      <0 0x10440000 0x100000>;
+		interrupts = <1 9 4>;
+	};
+
+	/* reduced to the path of the PMIC (see above) */
+	acpm_mfd_bus@18100000 {
+		#size-cells = <0>;
+		#address-cells = <1>;
+		compatible = "google,i2c-acpm";
+		status = "okay";
+
+		s2mpg12: s2mpg12mfd@1f {
+			reg = <0x1f>;
+			compatible = "samsung,s2mpg12mfd";
+		};
+	};
+
+	/* reduced to the paths of the PMIC and its regulators (see above) */
+	acpm_mfd_bus@18110000 {
+		#size-cells = <0>;
+		#address-cells = <1>;
+		compatible = "google,i2c-acpm";
+		status = "okay";
+
+		s2mpg13: s2mpg13mfd@2f {
+			reg = <0x2f>;
+			compatible = "samsung,s2mpg13mfd";
+
+			regulators {
+				s2mpg13_ldo7: LDO7S {
+					subsys-name = "Sensors";
+					schematic-name = "L7S_SENSORS";
+					channel-mux-selection = <0x27>;
+					regulator-initial-mode = <3>;
+					regulator-boot-on;
+					regulator-max-microvolt = <1950000>;
+					regulator-min-microvolt = <1600000>;
+					regulator-name = "S2MPG13_LDO7";
+					status = "disabled";
+				};
+
+				s2mpg13_ldo5: LDO5S {
+					subsys-name = "Prox";
+					schematic-name = "L5S_PROX";
+					channel-mux-selection = <0x25>;
+					regulator-initial-mode = <3>;
+					regulator-boot-on;
+					regulator-max-microvolt = <3300000>;
+					regulator-min-microvolt = <2500000>;
+					regulator-name = "S2MPG13_LDO5";
+					status = "disabled";
+				};
+
+				s2mpg13_bucka: BUCKA {
+					channel-en-index = <8>;
+					channel-en-byte-offset = <1>;
+					buck_rail;
+					subsys-name = "IO";
+					schematic-name = "SA";
+					channel-mux-selection = <0x0c>;
+					regulator-initial-mode = <3>;
+					regulator-always-on;
+					regulator-max-microvolt = <2100000>;
+					regulator-min-microvolt = <1700000>;
+					regulator-name = "S2MPG13_BUCKA";
+					status = "disabled";
+				};
+			};
+		};
+	};
+};

@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+#
+# \brief  Configuration of the audio driver for media on the loudspeakers
+# \author Ivan Loskutov
+# \date   2026-10-29
+#
+# SPDX-License-Identifier: MIT
+#
+"""Generate the 'config' ROM of the audio driver (pixel_audio) for media
+playback on both loudspeakers from Android's 'mixer_paths.xml'.
+
+    audio_speaker_config <mixer_paths.xml> [--gain <0..20>] [-o <file>]
+
+The config is what Android's audio HAL sets for media on the speaker,
+without the amplifiers' DSP (no speaker protection):
+
+    config | route: media | output: speaker | record: no | amp_mode: asp
+    + default <control> | value: ...     the initial values of the table
+    + control Audio DSP Mode | value: Ambient
+    + control ...                        the paths 'speaker' and
+                                         'low-latency-playbackP'
+    + control AMP PCM Gain | value: <gain>      both amplifiers fed
+    + control R AMP PCM Gain | value: <gain>    directly (ASP), at the
+    + control PCM Source | value: ASP           given gain (default 6)
+    + control R PCM Source | value: ASP
+    + playback | pcm: 1 | enabled: yes
+    -
+
+The HID text goes to stdout (or to the -o file), warnings to stderr. The
+exit code is 1 if the XML cannot be parsed or one of the paths is missing.
+The vendor file is proprietary: neither it nor the output generated from
+it is ever committed.
+
+Semantics taken from audio_route.c (system/media/audio_route)
+--------------------------------------------------------------
+
+The parser is audio_route's start_tag/end_tag handler, reproduced:
+
+* Only the element name and the nesting level count. A <ctl> at level 1
+  (child of the root) is an initial value, any deeper <ctl> a setting of the
+  current path. A <path> at level 1 starts a path, any deeper <path> is a
+  reference. Comments and character data are ignored.
+* Duplicate path name: path_create() fails ("Path name '%s' already exists"),
+  the current path becomes NULL, and every <ctl> and reference inside the
+  second definition is dropped. The first definition stays as it is.
+* A top-level <path> without a name ("Unnamed path!") leaves the current path
+  untouched, so its content extends the path defined before it.
+* A path holds ONE setting per control, at the position of the control's
+  first appearance. A later <ctl> for the same control changes that setting
+  in place (path_add_value).
+* A reference copies the settings the named path has at that point, in
+  order (path_add_path). A control the referencing path already holds keeps
+  its value: the one of the sub path is ignored ("already exists in path -
+  Ignore one in the new sub path"). A <ctl> after the reference overrides.
+  A reference to a path that is not defined yet (or not at all) is ignored
+  ("unable to find sub path").
+* 'id': a setting is an array of all elements of the control. A <ctl> with
+  'id' sets one element, without 'id' all of them. 'id' is parsed with
+  atoi(). When a <ctl> with 'id' creates the setting, audio_route also
+  stores the value in element 0 (path_add_value initialises element 0
+  before it looks at the index); this is reproduced, so a path that only
+  lists element 2 gets 'index: 0' and 'index: 2'. Elements a path never
+  lists are zero in audio_route's array and written as zero.
+* Initial values: 'id' sets that element only, the others keep what the
+  mixer had; no 'id' sets all elements; a repeated control overwrites the
+  earlier value.
+
+What audio_route decides with the live mixer, and the converter therefore
+leaves to the consumer of the table (the pixel_audio driver):
+
+* the type of a control. Integer and byte controls take the value as a
+  space-separated list with one number per element (strtol, base 0; bytes
+  base 16), and with 'id' only the first number; bool controls one number
+  for all elements; enum controls the item text (or its number with the
+  fallback flag). The value text is passed on unchanged.
+* the number of elements (for the zero fill and the range check of 'index'),
+  and whether a control exists at all ("doesn't exist - skipping").
+* the order of the initial values: audio_route applies them in the order of
+  the mixer's controls, not of the XML.
+
+Not representable, skipped with a warning: the 'bin' attribute (bytes from a
+file), a negative 'id' (-1 means "all elements" to audio_route, anything
+below is an out-of-bounds write there), a <ctl> without name or value.
+"""
+
+import argparse
+import re
+import sys
+from xml.parsers import expat
+
+
+class Setting:
+    """All values one path (or the initial values) holds for one control"""
+
+    def __init__(self, name):
+        self.name     = name
+        self.whole    = None   # value of a write without 'id'
+        self.elements = {}     # 'id' -> value
+
+    def copy(self):
+        s = Setting(self.name)
+        s.whole, s.elements = self.whole, dict(self.elements)
+        return s
+
+
+class Path:
+
+    def __init__(self, name, representable):
+        self.name          = name
+        self.settings      = []
+        self.representable = representable
+
+    def setting(self, name):
+        for s in self.settings:
+            if s.name == name:
+                return s
+        return None
+
+
+class Table:
+
+    def __init__(self):
+        self.defaults              = []     # [Setting]
+        self.all_paths             = []     # [Path], including not representable ones
+        self.enum_numeric_fallback = False
+        self.warnings              = []
+        self.stats = {"duplicate_paths": 0, "unnamed_paths": 0,
+                      "nested_references": 0, "unknown_sub_paths": 0,
+                      "ignored_in_sub_path": 0, "skipped_controls": 0,
+                      "skipped_paths": 0}
+
+    @property
+    def paths(self):
+        return [p for p in self.all_paths if p.representable]
+
+    def path(self, name):
+        for p in self.paths:
+            if p.name == name:
+                return p
+        return None
+
+
+def writes(settings):
+    """Flatten settings into (control, index or None, value) tuples"""
+    result = []
+    for s in settings:
+        if s.whole is not None:
+            result.append((s.name, None, s.whole))
+        for index in sorted(s.elements):
+            result.append((s.name, index, s.elements[index]))
+    return result
+
+
+def _atoi(text):
+    match = re.match(r"\s*([+-]?[0-9]+)", text)
+    return int(match.group(1)) if match else 0
+
+
+def _hid_value(text):
+    """True if 'text' survives as a HID attribute value"""
+    return (text == text.strip()
+            and all(ord(c) >= 0x20 and ord(c) != 0x7f and c != "|" for c in text))
+
+
+class _Parser:
+    """audio_route's start_tag/end_tag"""
+
+    def __init__(self):
+        self.table = Table()
+        self.path  = None   # 'state->path'
+        self.level = 0
+
+    def _warn(self, text):
+        self.table.warnings.append(text)
+
+    def _find(self, name):
+        for p in self.table.all_paths:
+            if p.name == name:
+                return p
+        return None
+
+    def _start_path(self, name):
+        stats = self.table.stats
+        if name is None:
+            stats["unnamed_paths"] += 1
+            self._warn("Unnamed path!")
+            return
+
+        if self.level == 1:
+            if self._find(name):
+                stats["duplicate_paths"] += 1
+                self._warn("Path name '%s' already exists, second definition dropped" % name)
+                self.path = None
+                return
+            representable = _hid_value(name)
+            if not representable:
+                stats["skipped_paths"] += 1
+                self._warn("path name %r cannot be written as HID - skipping" % name)
+            self.path = Path(name, representable)
+            self.table.all_paths.append(self.path)
+            return
+
+        sub_path = self._find(name)
+        if sub_path is None:
+            stats["unknown_sub_paths"] += 1
+            self._warn("unable to find sub path '%s'" % name)
+            return
+        if self.path is None:
+            return
+
+        stats["nested_references"] += 1
+        for setting in list(sub_path.settings):
+            if self.path.setting(setting.name):
+                stats["ignored_in_sub_path"] += 1
+                continue
+            self.path.settings.append(setting.copy())
+
+    def _skip(self, text):
+        self.table.stats["skipped_controls"] += 1
+        self._warn(text + " - skipping")
+
+    def _start_ctl(self, attr):
+        name, value, attr_id = attr.get("name"), attr.get("value"), attr.get("id")
+
+        if name is None:
+            return self._skip("ctl without name")
+        if "bin" in attr:
+            return self._skip("ctl '%s': values from file '%s' are not supported"
+                              % (name, attr["bin"]))
+        if value is None:
+            return self._skip("No value specified for ctl %s" % name)
+        if not name or not _hid_value(name):
+            return self._skip("ctl name %r cannot be written as HID" % name)
+        if not value or not _hid_value(value):
+            return self._skip("value %r of ctl '%s' cannot be written as HID" % (value, name))
+
+        index = None if attr_id is None else _atoi(attr_id)
+        if index is not None and index < 0:
+            return self._skip("ctl '%s': id %d" % (name, index))
+
+        if self.level == 1:
+            setting = next((s for s in self.table.defaults if s.name == name), None)
+            if setting is None:
+                setting = Setting(name)
+                self.table.defaults.append(setting)
+        else:
+            if self.path is None:
+                return
+            setting = self.path.setting(name)
+            if setting is None:
+                setting = Setting(name)
+                self.path.settings.append(setting)
+                if index is not None:
+                    setting.elements[0] = value   # as path_add_value does
+
+        if index is None:
+            setting.whole, setting.elements = value, {}
+        else:
+            setting.elements[index] = value
+
+    def start(self, tag, attr):
+        if tag == "mixer":
+            self.table.enum_numeric_fallback = \
+                attr.get("enum_mixer_numeric_fallback") == "true"
+        elif tag == "path":
+            self._start_path(attr.get("name"))
+        elif tag == "ctl":
+            self._start_ctl(attr)
+        self.level += 1
+
+    def end(self, tag):
+        self.level -= 1
+
+
+def parse(data):
+    """Parse the content of a mixer_paths.xml (bytes or str) into a Table"""
+    state  = _Parser()
+    parser = expat.ParserCreate()
+    parser.StartElementHandler = state.start
+    parser.EndElementHandler   = state.end
+    try:
+        parser.Parse(data, True)
+    except expat.ExpatError as e:
+        raise ValueError("Error in mixer xml: %s" % e)
+
+    table = state.table
+    table.stats["paths"]            = len(table.paths)
+    table.stats["default_controls"] = len(table.defaults)
+    table.stats["default_writes"]   = len(writes(table.defaults))
+    table.stats["path_writes"]      = sum(len(writes(p.settings)) for p in table.paths)
+    return table
+
+
+def _node(indent, node_type, name, attributes=()):
+    """One HID line: a sub node with its name and attributes"""
+    text = indent + "+ " + node_type
+    if re.search(r":( |$)", name):
+        attributes = (("name", name),) + tuple(attributes)
+    elif name:
+        text += " " + name
+    for tag, value in attributes:
+        text += " | %s: %s" % (tag, value)
+    return text + "\n"
+
+
+def _write_lines(node_type, settings):
+    text = ""
+    for name, index, value in writes(settings):
+        attributes = (("value", value),) if index is None \
+                else (("index", index), ("value", value))
+        text += _node("", node_type, name, attributes)
+    return text
+
+
+PATHS        = ("speaker", "low-latency-playbackP")
+PCM_PLAYBACK = 1
+MAX_GAIN     = 20
+
+
+def speaker_config(table, gain):
+    """Return the config as HID text, or raise KeyError for a missing path"""
+    text  = "config | route: media | output: speaker | record: no | amp_mode: asp\n"
+    text += _write_lines("default", table.defaults)
+    text += _node("", "control", "Audio DSP Mode", (("value", "Ambient"),))
+    for name in PATHS:
+        path = table.path(name)
+        if path is None:
+            raise KeyError(name)
+        text += _write_lines("control", path.settings)
+    for name, value in (("AMP PCM Gain", gain), ("R AMP PCM Gain", gain),
+                        ("PCM Source", "ASP"), ("R PCM Source", "ASP")):
+        text += _node("", "control", name, (("value", value),))
+    text += _node("", "playback", "", (("pcm", PCM_PLAYBACK), ("enabled", "yes")))
+    return text + "-\n"
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description="mixer_paths.xml -> pixel_audio config "
+                                             "for media on the loudspeakers")
+    ap.add_argument("xml", help="mixer_paths.xml as read by Android's audio_route")
+    ap.add_argument("--gain", type=int, default=6,
+                    help="'AMP PCM Gain' of both amplifiers, 0..20 (default 6)")
+    ap.add_argument("-o", "--output", help="output file (default: stdout)")
+    args = ap.parse_args(argv)
+
+    if not 0 <= args.gain <= MAX_GAIN:
+        sys.stderr.write("Error: gain must be 0..%d (is %d)\n" % (MAX_GAIN, args.gain))
+        return 1
+
+    with open(args.xml, "rb") as fd:
+        data = fd.read()
+    try:
+        table = parse(data)
+        text  = speaker_config(table, args.gain)
+    except ValueError as e:
+        sys.stderr.write("Error: %s: %s\n" % (args.xml, e))
+        return 1
+    except KeyError as e:
+        sys.stderr.write("Error: %s: no path %s\n" % (args.xml, e))
+        return 1
+
+    for warning in table.warnings:
+        sys.stderr.write("Warning: %s\n" % warning)
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as fd:
+            fd.write(text)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -9,23 +9,29 @@
 # The audio driver requests the firmware of the AoC DSP ('aoc.bin') and of
 # the DSPs of the two CS35L41 speaker amplifiers (the speaker protection and
 # its tuning) as ROM modules, which the run scenarios take from a tar
-# archive. The files are not part of Genode. This tool copies them via adb
-# from the phone's '/vendor/firmware' and packs them into the archive.
+# archive. The run scenarios also take the vendor's mixer paths
+# ('mixer_paths.xml', the control values of Android's audio routes) from
+# it, to generate the configuration of the driver. The files are not part
+# of Genode. This tool copies them via adb from the phone's
+# '/vendor/firmware' and '/vendor/etc' and packs them into the archive.
 #
 # usage: pull_audio_firmware [<archive>]
 #
 # The default archive is 'contrib/pixel_audio_firmware.tar' of the Genode
 # source tree, the one the run scenarios use unless AUDIO_FW names another.
 #
-# The files are readable for root only. The phone must run an Android build
-# that permits 'adb root' (userdebug, e.g., LineageOS) with USB debugging
-# enabled, and 'adb root' must be executed before this tool.
+# The phone must run Android with USB debugging enabled. If the files are
+# not readable for adb's shell user, execute 'adb root' first (userdebug
+# builds, e.g., LineageOS).
 #
 
 set -e
 
-FILES="aoc.bin cs35l41-dsp1-spk-prot.wmfw cs35l41-dsp1-spk-prot.bin \
-       R-cs35l41-dsp1-spk-prot.bin"
+FILES="/vendor/firmware/aoc.bin \
+       /vendor/firmware/cs35l41-dsp1-spk-prot.wmfw \
+       /vendor/firmware/cs35l41-dsp1-spk-prot.bin \
+       /vendor/firmware/R-cs35l41-dsp1-spk-prot.bin \
+       /vendor/etc/mixer_paths.xml"
 
 GENODE_DIR=$(cd "$(dirname "$0")/../../.." && pwd)
 
@@ -38,14 +44,17 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 adb wait-for-device
 
+NAMES=""
 for file in $FILES; do
-	if ! adb pull "/vendor/firmware/$file" "$TMP_DIR/$file" > /dev/null; then
-		echo "Error: could not pull /vendor/firmware/$file, execute 'adb root' first" >&2
+	name=$(basename "$file")
+	if ! adb pull "$file" "$TMP_DIR/$name" > /dev/null; then
+		echo "Error: could not pull $file, try 'adb root' first" >&2
 		exit 1
 	fi
+	NAMES="$NAMES $name"
 done
 
 mkdir -p "$(dirname "$ARCHIVE")"
-tar cf "$ARCHIVE" --owner=0 --group=0 --numeric-owner -C "$TMP_DIR" $FILES
+tar cf "$ARCHIVE" --owner=0 --group=0 --numeric-owner -C "$TMP_DIR" $NAMES
 
 echo "created $ARCHIVE"

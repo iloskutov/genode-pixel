@@ -1,0 +1,271 @@
+#
+# Audio driver for the Google Pixel 7
+#
+# The driver 'pixel_audio' starts the AoC DSP through Trusty and the
+# security chip, registers the AoC's sound card with its two CS35L41
+# speaker amplifiers on SPI7, and plays what 'record_play_mixer' mixes on
+# the loudspeakers: a sine tone of 'waveform_player', or the WAV file named
+# by the environment variable WAV, which 'test-audio_play' plays in a loop.
+# The bring-up runs in stages, each logs one line "pixel_audio: stage <name>
+# ok: ..." or "... FAILED: ...". The test succeeded when all stages (smc, gsa,
+# tipc, load, start, amp, card, mixer, play) log "ok", the log shows
+# "config 1 applied" and "playback: PCM <n> running", and the sound is audible.
+#
+# The driver is configured for media on the loudspeakers without the
+# amplifiers' DSP (no speaker protection): keep the volume low.
+#
+# The firmware of the AoC and of the amplifiers' DSPs and the vendor's
+# mixer paths are not part of Genode. They are taken from the tar archive
+# AUDIO_FW (environment or make variable), by default the one that
+# 'tool/pull_audio_firmware' creates from a phone running Android. A
+# relative path is relative to the build directory.
+#
+#   make run/audio_pixel KERNEL=hw BOARD=google_pixel7 [WAV=<file>]
+#
+# Further environment variables:
+#
+#   WAV_S=<seconds>    length of the WAV file played (default 30)
+#   VOLUME=<0..1>      volume in the mixer (default 0.02 for the tone,
+#                      0.25 for a WAV file)
+#   GAIN=<0..20>       'AMP PCM Gain' of the amplifiers (default 6)
+#   MIXER_REPORT=yes   log the "mixer" report of the driver: all controls of
+#                      the sound card with their values (default no)
+#
+# A WAV file is converted with ffmpeg to what 'test-audio_play' plays: raw
+# interleaved stereo, 32-bit float, 44100 Hz.
+#
+
+assert {[have_board google_pixel7]}
+
+proc env_or { name default } {
+	if {[info exists ::env($name)]} { return $::env($name) }
+	return $default
+}
+
+set wav    [env_or WAV ""]
+set wav_s  [env_or WAV_S 30]
+set volume [env_or VOLUME [expr {$wav eq "" ? 0.02 : 0.25}]]
+set gain   [env_or GAIN 6]
+set mixer_report [env_or MIXER_REPORT no]
+
+if {$wav ne "" && ![file exists $wav]} {
+	puts stderr "Error: WAV file '$wav' not found"
+	exit 1
+}
+if {![string is double -strict $volume] || $volume < 0 || $volume > 1} {
+	puts stderr "Error: VOLUME must be a factor 0..1 (is '$volume')"
+	exit 1
+}
+
+set audio_fw [file join [genode_dir] contrib pixel_audio_firmware.tar]
+if {[info exists ::env(AUDIO_FW)]} {
+	set audio_fw [file normalize $::env(AUDIO_FW)] }
+
+if {![file exists $audio_fw]} {
+	puts stderr "Error: audio firmware '$audio_fw' missing, create it with"
+	puts stderr "       '[genode_dir]/repos/pixel/tool/pull_audio_firmware'"
+	puts stderr "       or name another archive by AUDIO_FW"
+	exit 1
+}
+
+set build_components {
+	core init lib/ld timer
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/audio/pixel
+	server/report_rom
+	server/record_play_mixer
+}
+if {$wav eq ""} {
+	lappend build_components app/waveform_player
+} else {
+	lappend build_components test/audio_play lib/vfs }
+
+build $build_components
+
+create_boot_directory
+
+
+#
+# Firmware ROMs and the config of the driver
+#
+set firmware { aoc.bin cs35l41-dsp1-spk-prot.wmfw cs35l41-dsp1-spk-prot.bin
+               R-cs35l41-dsp1-spk-prot.bin }
+
+exec tar xf $audio_fw -C [run_dir]/genode {*}$firmware
+exec tar xf $audio_fw -C [run_dir] mixer_paths.xml
+
+exec [installed_command python3] -I \
+	[file join [genode_dir] repos pixel tool audio_speaker_config] \
+	--gain $gain -o [run_dir]/genode/audio_config [run_dir]/mixer_paths.xml
+
+# the exact size of a firmware image: a ROM dataspace is page-rounded
+set settings "settings\n"
+foreach name $firmware {
+	append settings "+ firmware $name | size: [file size [run_dir]/genode/$name]\n" }
+append settings "-\n"
+
+set fd [open [run_dir]/genode/audio_settings w]
+puts -nonewline $fd $settings
+close $fd
+
+if {$wav ne ""} {
+	if {[catch {exec [installed_command ffmpeg] -y -loglevel error -i $wav \
+	                 -t $wav_s -f f32le -ac 2 -ar 44100 \
+	                 [run_dir]/genode/sample.f32} msg]} {
+		puts stderr "Error: conversion of '$wav' failed: $msg"
+		exit 1
+	}
+}
+
+
+#
+# Platform devices and pins of the driver. The boot loader leaves the S2MPU
+# of the security chip without access, the driver opens it for the
+# authentication of the AoC firmware.
+#
+set audio_devices { gsa s2mpu_gsa aoc aoc_mbox0 aoc_mbox1 aoc_mbox2 spi7 }
+
+set platform_audio_devices ""
+foreach device $audio_devices {
+	append platform_audio_devices "      + device $device\n" }
+
+set player [expr {$wav eq "" ? "waveform_player" : "test-audio_play"}]
+
+set play_starts [string map [list @PLAYER@ $player @VOLUME@ $volume] {
++ start mixer | ram: 2M
+  + binary record_play_mixer
+  + provides
+    + service Record
+    + service Play
+  + config | jitter_ms: 10 | record_period_ms: 10 | warning_rate_ms: 1000
+    + mix left      | + play | label: @PLAYER@ -> left  | volume: @VOLUME@
+    + mix right     | + play | label: @PLAYER@ -> right | volume: @VOLUME@
+    + mix mic_left  | + play | label: pixel_audio -> mic_left  | jitter_ms: 20
+    + mix mic_right | + play | label: pixel_audio -> mic_right | jitter_ms: 20
+    + policy | label: pixel_audio -> left  | record: left
+    + policy | label: pixel_audio -> right | record: right
+  + route
+    + service Timer  | + child timer
+    + service Report | + child report_rom
+    + any-service    | + parent
+}]
+
+if {$wav eq ""} {
+	append play_starts {
++ start waveform_player | ram: 2M
+  + config | period_ms: 10
+    + play | label: left  | wave: sine | hz: 440 | sample_rate_hz: 44100
+    + play | label: right | wave: sine | hz: 440 | sample_rate_hz: 44100
+  + route
+    + service Play  | + child mixer
+    + service Timer | + child timer
+    + any-service   | + parent
+}
+} else {
+	append play_starts "
++ start test-audio_play | ram: [expr {[file size [run_dir]/genode/sample.f32]/(1024*1024) + 8}]M
+  + config | sample_path: sample.f32
+  | + vfs | + rom sample.f32
+  + route
+    + service Play  | + child mixer
+    + service Timer | + child timer
+    + any-service   | + parent
+"
+}
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start report_rom | ram: 2M
+  + provides
+    + service Report
+    + service ROM
+  + config | verbose: } $mixer_report {
+  + route | + any-service | + parent
+
++ start platform | caps: 150 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+  + config
+    + policy | label_prefix: gs201_pio | info: yes
+      + device gpio_far_alive
+      + device gpio_peric0
+      + device gpio_peric1
+    + policy | label_prefix: pixel_audio | info: yes
+} $platform_audio_devices {
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start gs201_pio | caps: 150 | ram: 2M
+  + provides
+    + service Pin_state
+    + service Pin_control
+    + service IRQ
+  + config
+    + select spi7_clk    | bank: gpp14 | index: 0 | function: 3
+    + select spi7_mosi   | bank: gpp14 | index: 1 | function: 3
+    + select spi7_miso   | bank: gpp14 | index: 2 | function: 3 | pull: down
+    + out    amp_l_cs    | bank: gpp14 | index: 3 | default: yes
+    + out    amp_r_cs    | bank: gpp22 | index: 1 | default: yes
+    + out    amp_l_reset | bank: gpp17 | index: 1 | default: no
+    + out    amp_r_reset | bank: gpp25 | index: 2 | default: no
+    + in     amp_l_int   | bank: gpa6  | index: 3 | irq: high
+    + in     amp_r_int   | bank: gpa8  | index: 6 | irq: high
+    + policy | label: pixel_audio -> gpp14-3 | pin: amp_l_cs
+    + policy | label: pixel_audio -> gpp22-1 | pin: amp_r_cs
+    + policy | label: pixel_audio -> gpp17-1 | pin: amp_l_reset
+    + policy | label: pixel_audio -> gpp25-2 | pin: amp_r_reset
+    + policy | label: pixel_audio -> 79      | pin: amp_l_int
+    + policy | label: pixel_audio -> 94      | pin: amp_r_int
+      . an interrupt session of a pin is labeled by its GIC interrupt
+  + route
+    + service Platform | + child platform
+    + any-service      | + parent
+} $play_starts {
++ start pixel_audio | caps: 600 | ram: 96M | managing_system: yes
+  . managing_system: SMCs to Trusty through core's system control. No
+  . affinity: a standard call and its restart must reach Trusty from the
+  . same CPU.
+  + route
+    + service ROM | label: dtb      | + parent | label: pixel_audio-google_pixel7.dtb
+    + service ROM | label: settings | + parent | label: audio_settings
+    + service ROM | label: config   | + parent | label: audio_config
+    + service Platform    | + child platform
+    + service Dma         | + child platform
+    + service Pin_state   | + child gs201_pio
+    + service Pin_control | + child gs201_pio
+    + service IRQ         | + child gs201_pio
+    + service Report      | + child report_rom
+    + service Timer       | + child timer
+    + service Record      | + child mixer
+    + service Play        | + child mixer
+    + any-service         | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+# the firmware, the settings, the config, and the sample are in the boot
+# directory already
+build_boot_image [build_artifacts]
+
+run_genode_until forever
