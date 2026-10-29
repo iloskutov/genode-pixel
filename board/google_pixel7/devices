@@ -17,14 +17,25 @@ devices
   . its own interrupt, numbered as in the device tree plus 32.
   .
   + io_mem | address: 0x180e0000 | size: 0x1000
+  + irq    | number: 79 | . gpa6-3, interrupt of the top speaker amplifier
   + irq    | number: 84 | . gpa7-0, interrupt of the touchscreen
   + irq    | number: 93 | . gpa8-5, volume-up key
+  + irq    | number: 94 | . gpa8-6, interrupt of the bottom speaker amplifier
+
++ device gpio_peric0 | type: samsung,gs201-gpio
+  .
+  . GPIO controller of the PERIC0 block (banks gpp0 to gpp19), used by the
+  . pin driver gs201_pio for the SPI7 bus, the chip select of the top
+  . speaker amplifier, and the reset of the bottom one
+  .
+  + io_mem | address: 0x10840000 | size: 0x1000
 
 + device gpio_peric1 | type: samsung,gs201-gpio
   .
   . GPIO controller of the PERIC1 block (banks gpp20 to gpp27), used by the
-  . pin driver gs201_pio for the SPI0 bus, the touchscreen's reset, and the
-  . I2C bus of USI13
+  . pin driver gs201_pio for the SPI0 bus, the touchscreen's reset, the I2C
+  . bus of USI13, the chip select of the bottom speaker amplifier, and the
+  . reset of the top one
   .
   + io_mem | address: 0x10c40000 | size: 0x1000
 
@@ -113,6 +124,72 @@ devices
   + clock spi0-pclk  | driver_name: gate_spi_clk
   + clock usi0-spi-mode
   + power-domain touch-power
+
++ device spi7 | type: samsung,exynos-spi
+  .
+  . SPI controller of USI7, the bus of the two CS35L41 speaker amplifiers.
+  . Their rails need no power domain: VA (S2MPG13 BUCKA) is always on, VP
+  . is the battery.
+  .
+  + io_mem | address: 0x10960000 | size: 0x1000
+  + irq    | number: 712
+  + clock top-peric0-ip
+  + clock top-peric0-noc
+  + clock usi7-mux
+  + clock usi7-div
+  + clock spi7-ipclk | driver_name: ipclk_spi
+  + clock spi7-pclk  | driver_name: gate_spi_clk
+  + clock usi7-spi-mode
+
++ device gsa | type: google,gs101-gsa-v1
+  .
+  . Non-secure mailbox of the security chip (GSA, gsa-ns), which
+  . authenticates the firmware of the AoC
+  .
+  + io_mem | address: 0x17c90000 | size: 0x1000
+  + irq    | number: 395
+
++ device s2mpu_gsa | type: samsung,gs201-s2mpu
+  .
+  . Stage-2 protection unit between the GSA and AP memory
+  . (s2mpu_gsa@17c60000). The boot loader leaves it enabled without access,
+  . so the GSA cannot read the firmware of the AoC until the audio driver
+  . programs it. Powered only while the GSA's core domain is on: an access
+  . at any other time is an SError. The interrupt reports faults.
+  .
+  + io_mem | address: 0x17c60000 | size: 0x10000
+  + irq    | number: 398
+
++ device aoc | type: google,aoc
+  .
+  . AoC ("always-on compute") DSP, which all audio hangs behind
+  . (aoc@19000000): its request register and the 48 MiB memory of its
+  . firmware and IPC rings (reserved memory aoc@94000000, excluded from RAM
+  . by bootstrap). The memory is write-combined, as Linux' ioremap_wc: the
+  . firmware is copied with memcpy, the rings are read unaligned. The
+  . interrupt is the AoC's watchdog.
+  .
+  + io_mem | address: 0x181d0000 | size: 0x1000
+  + io_mem | address: 0x94000000 | size: 0x3000000 | wc: yes
+  + irq    | number: 148
+  + power-domain sensor-power
+  + power-domain dmic-power
+
++ device aoc_mbox0 | type: google,mailbox-whitechapel
+  .
+  . Mailboxes of the AoC, the doorbells of its service rings
+  . (aoc2ap, aoc_f1_ap, aoc_p6_ap)
+  .
+  + io_mem | address: 0x18300000 | size: 0x1000
+  + irq    | number: 107
+
++ device aoc_mbox1 | type: google,mailbox-whitechapel
+  + io_mem | address: 0x18320000 | size: 0x1000
+  + irq    | number: 108
+
++ device aoc_mbox2 | type: google,mailbox-whitechapel
+  + io_mem | address: 0x18340000 | size: 0x1000
+  + irq    | number: 109
 
 + device ufs | type: samsung,exynos-ufs
   .

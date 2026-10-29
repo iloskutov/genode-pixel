@@ -6,10 +6,11 @@
  * The register offsets are taken from the vendor's clock description of the
  * GS201 (cmucal-sfr.c) and its device tree. All clocks are fed by the
  * 26 MHz oscillator. Only the clocks of the drivers of this repository are
- * described: the bus clocks of the PERIC1 block, the USI0 serial interface
- * in SPI mode (touchscreen), the USI13 serial interface in I2C mode (Type-C
- * controller), the UFS host controller, PCIe channel 1 (WiFi), and the USB
- * controller.
+ * described: the bus clocks of the PERIC0 and PERIC1 blocks, the USI7
+ * serial interface in SPI mode (speaker amplifiers), the USI0 serial
+ * interface in SPI mode (touchscreen), the USI13 serial interface in I2C
+ * mode (Type-C controller), the UFS host controller, PCIe channel 1
+ * (WiFi), and the USB controller.
  */
 
 /*
@@ -183,16 +184,26 @@ struct Driver::Cmu : private Noncopyable
 
 	enum : addr_t {
 		CMU_TOP_BASE       = 0x1e080000,
+		CMU_PERIC0_BASE    = 0x10800000,
 		CMU_PERIC1_BASE    = 0x10c00000,
 		CMU_HSI2_BASE      = 0x14400000,
 		CMU_SIZE           = 0x4000,
+		SYSREG_PERIC0_BASE = 0x10821000,
 		SYSREG_PERIC1_BASE = 0x10c21000,
 		SYSREG_HSI2_BASE   = 0x14420000,
 		SYSREG_SIZE        = 0x1000,
 
-		/* CMU_TOP: gates of the clocks that feed the PERIC1 block */
+		/* CMU_TOP: gates of the clocks that feed the PERIC0 and PERIC1 blocks */
+		TOP_PERIC0_IP_OFFSET  = 0x2108,
+		TOP_PERIC0_NOC_OFFSET = 0x210c,
 		TOP_PERIC1_IP_OFFSET  = 0x2110,
 		TOP_PERIC1_NOC_OFFSET = 0x2114,
+
+		/* CMU_PERIC0: USI7 user multiplexer, divider, SPI7 IP and bus clock */
+		USI7_MUX_OFFSET   = 0x06b0,
+		USI7_DIV_OFFSET   = 0x1828,
+		SPI7_IPCLK_OFFSET = 0x2098,
+		SPI7_PCLK_OFFSET  = 0x209c,
 
 		/* CMU_PERIC1: USI0 user multiplexer, SPI0 IP and bus clock */
 		USI0_MUX_OFFSET   = 0x0620,
@@ -216,6 +227,9 @@ struct Driver::Cmu : private Noncopyable
 		PCIE1_DRV_APB_OFFSET   = 0x205c,
 		PCIE1_PHY_APB_OFFSET   = 0x2074,
 
+		/* SYSREG_PERIC0: protocol of USI7 */
+		USI7_SW_CONF_OFFSET = 0x18,
+
 		/* SYSREG_PERIC1: protocol of USI0 and USI13 */
 		USI0_SW_CONF_OFFSET  = 0x0,
 		USI13_SW_CONF_OFFSET = 0x14,
@@ -227,11 +241,17 @@ struct Driver::Cmu : private Noncopyable
 	};
 
 	Attached_mmio<0> _cmu_top       { _env, {(char *)CMU_TOP_BASE,       CMU_SIZE} };
+	Attached_mmio<0> _cmu_peric0    { _env, {(char *)CMU_PERIC0_BASE,    CMU_SIZE} };
 	Attached_mmio<0> _cmu_peric1    { _env, {(char *)CMU_PERIC1_BASE,    CMU_SIZE} };
 	Attached_mmio<0> _cmu_hsi2      { _env, {(char *)CMU_HSI2_BASE,      CMU_SIZE} };
+	Attached_mmio<0> _sysreg_peric0 { _env, {(char *)SYSREG_PERIC0_BASE, SYSREG_SIZE} };
 	Attached_mmio<0> _sysreg_peric1 { _env, {(char *)SYSREG_PERIC1_BASE, SYSREG_SIZE} };
 	Attached_mmio<0> _sysreg_hsi2   { _env, {(char *)SYSREG_HSI2_BASE,   SYSREG_SIZE} };
 
+	Gate _top_peric0_ip  { _clocks, "top-peric0-ip",  _osc_clk,
+	                       _cmu_top.range_at(TOP_PERIC0_IP_OFFSET) };
+	Gate _top_peric0_noc { _clocks, "top-peric0-noc", _osc_clk,
+	                       _cmu_top.range_at(TOP_PERIC0_NOC_OFFSET) };
 	Gate _top_peric1_ip  { _clocks, "top-peric1-ip",  _osc_clk,
 	                       _cmu_top.range_at(TOP_PERIC1_IP_OFFSET) };
 	Gate _top_peric1_noc { _clocks, "top-peric1-noc", _osc_clk,
@@ -246,6 +266,24 @@ struct Driver::Cmu : private Noncopyable
 	                          _cmu_peric1.range_at(SPI0_PCLK_OFFSET) };
 	Usi_mode _usi0_spi_mode { _clocks, "usi0-spi-mode",
 	                          _sysreg_peric1.range_at(USI0_SW_CONF_OFFSET),
+	                          Usi_mode::SPI };
+
+	/*
+	 * USI7 in SPI mode (speaker amplifiers). The oscillator divided by 2
+	 * gives 13 MHz, the SPI controller divides it by 4: a bus clock of
+	 * 3.25 MHz, below the 4 MHz limit of the CS35L41's OTP read, which the
+	 * amplifier driver does not enforce itself.
+	 */
+	Mux      _usi7_mux      { _clocks, "usi7-mux",
+	                          _cmu_peric0.range_at(USI7_MUX_OFFSET) };
+	Div      _usi7_div      { _clocks, "usi7-div", _osc_clk, 2,
+	                          _cmu_peric0.range_at(USI7_DIV_OFFSET) };
+	Gate     _spi7_ipclk    { _clocks, "spi7-ipclk", _usi7_div,
+	                          _cmu_peric0.range_at(SPI7_IPCLK_OFFSET) };
+	Gate     _spi7_pclk     { _clocks, "spi7-pclk",  _osc_clk,
+	                          _cmu_peric0.range_at(SPI7_PCLK_OFFSET) };
+	Usi_mode _usi7_spi_mode { _clocks, "usi7-spi-mode",
+	                          _sysreg_peric0.range_at(USI7_SW_CONF_OFFSET),
 	                          Usi_mode::SPI };
 
 	/*

@@ -370,10 +370,88 @@ struct Driver::Acpm : private Noncopyable
 		void _off() override { }
 	};
 
+	/*
+	 * Sensor rails of the AoC: LDO7S (sensor_1v8) and LDO5S (sensor_3v3) of
+	 * the S2MPG13, the 'sensor_power_list' of its device-tree node. The
+	 * vendor's AoC driver switches them on at probe. They stay on while the
+	 * AoC runs.
+	 */
+	struct Sensor_power : Driver::Power
+	{
+		Acpm &_acpm;
+
+		enum {
+			S2MPG13_L5S_CTRL = 0x30, S2MPG13_L7S_CTRL = 0x32, EN_MASK = 0x80,
+			SETTLE_MS = 10,
+		};
+
+		Sensor_power(Powers &powers, Acpm &acpm)
+		:
+			Driver::Power(powers, "sensor-power"), _acpm(acpm)
+		{ }
+
+		void _on() override
+		{
+			bool const ok =
+				_acpm._pmic_update(S2MPG13_L7S_CTRL, EN_MASK, EN_MASK,
+				                   PMIC_CHANNEL_SUB)
+			 && _acpm._pmic_update(S2MPG13_L5S_CTRL, EN_MASK, EN_MASK,
+				                   PMIC_CHANNEL_SUB);
+			if (!ok)
+				Genode::warning("could not switch on the sensor supplies of the AoC");
+
+			_acpm._timer.msleep(SETTLE_MS);
+		}
+
+		void _off() override { }
+	};
+
+	/*
+	 * Supplies of the three PDM microphones: LDO20M (DMIC1) of the S2MPG12,
+	 * LDO20S (DMIC2) and LDO19S (DMIC3) of the S2MPG13, mode 3 (on) in the
+	 * enable field. On Android the regulator core switches them on as
+	 * 'regulator-always-on', no audio driver touches them; the boot loader
+	 * leaves them off, and unpowered microphones make the AoC capture
+	 * digital silence. The voltage code (1.8 V) stays as it is.
+	 */
+	struct Dmic_power : Driver::Power
+	{
+		Acpm &_acpm;
+
+		enum {
+			S2MPG12_L20M_CTRL = 0x3f, S2MPG13_L19S_CTRL = 0x3e,
+			S2MPG13_L20S_CTRL = 0x3f, EN_MASK = 0xc0, SETTLE_MS = 10,
+		};
+
+		Dmic_power(Powers &powers, Acpm &acpm)
+		:
+			Driver::Power(powers, "dmic-power"), _acpm(acpm)
+		{ }
+
+		void _on() override
+		{
+			bool const ok =
+				_acpm._pmic_update(S2MPG12_L20M_CTRL, EN_MASK, EN_MASK,
+				                   PMIC_CHANNEL)
+			 && _acpm._pmic_update(S2MPG13_L20S_CTRL, EN_MASK, EN_MASK,
+				                   PMIC_CHANNEL_SUB)
+			 && _acpm._pmic_update(S2MPG13_L19S_CTRL, EN_MASK, EN_MASK,
+				                   PMIC_CHANNEL_SUB);
+			if (!ok)
+				Genode::warning("could not switch on the microphone supplies");
+
+			_acpm._timer.msleep(SETTLE_MS);
+		}
+
+		void _off() override { }
+	};
+
 	Timer::Connection _timer { _env };
 
-	Touch_power _touch_power { _powers, *this };
-	Usb_rails   _usb_rails   { _powers, *this };
+	Touch_power  _touch_power  { _powers, *this };
+	Usb_rails    _usb_rails    { _powers, *this };
+	Sensor_power _sensor_power { _powers, *this };
+	Dmic_power   _dmic_power   { _powers, *this };
 
 	Acpm(Genode::Env &env, Powers &powers) : _env(env), _powers(powers)
 	{
