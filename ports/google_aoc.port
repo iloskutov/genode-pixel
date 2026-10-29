@@ -1,0 +1,17 @@
+LICENSE   := GPLv2
+VERSION   := git
+DOWNLOADS := google_aoc.git google_aoc_ipc.git
+
+#
+# AoC ("always-on compute") DSP of the Pixel 7 as used by the audio driver:
+# the AoC core, its mailbox and service devices, the ALSA front end, and the
+# IPC library of the service rings. The revisions are the ones of the kernel
+# manifest android-gs-pantah-6.1-android16.
+#
+URL(google_aoc) := https://android.googlesource.com/kernel/google-modules/aoc
+REV(google_aoc) := cda4de7727f019dd432f5ad0748d7e025069e362
+DIR(google_aoc) := src/google_aoc/aoc
+
+URL(google_aoc_ipc) := https://android.googlesource.com/kernel/google-modules/aoc-ipc
+REV(google_aoc_ipc) := 13f181684aec31f2329f1ed8806a351b7e0befc1
+DIR(google_aoc_ipc) := src/google_aoc/aoc_ipc

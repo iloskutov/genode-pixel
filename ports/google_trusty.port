@@ -1,0 +1,13 @@
+LICENSE   := GPLv2
+VERSION   := git
+DOWNLOADS := google_trusty.git
+
+#
+# Trusty client of the Pixel 7 kernel (SMC core, virtio transport, TIPC) as
+# used by the audio driver, which starts the AoC by a TIPC message to the
+# security chip's hardware manager. The revision is the one of the kernel
+# manifest android-gs-pantah-6.1-android16.
+#
+URL(google_trusty) := https://android.googlesource.com/kernel/google-modules/trusty
+REV(google_trusty) := a246a43b65f94226030655a9c6087addbbb9168e
+DIR(google_trusty) := src/google_trusty

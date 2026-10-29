@@ -1,0 +1,51 @@
+#!/bin/sh
+#
+# \brief  Pull the firmware of the audio path from a Pixel 7 running Android
+# \author Ivan Loskutov
+# \date   2026-10-29
+#
+# SPDX-License-Identifier: MIT
+#
+# The audio driver requests the firmware of the AoC DSP ('aoc.bin') and of
+# the DSPs of the two CS35L41 speaker amplifiers (the speaker protection and
+# its tuning) as ROM modules, which the run scenarios take from a tar
+# archive. The files are not part of Genode. This tool copies them via adb
+# from the phone's '/vendor/firmware' and packs them into the archive.
+#
+# usage: pull_audio_firmware [<archive>]
+#
+# The default archive is 'contrib/pixel_audio_firmware.tar' of the Genode
+# source tree, the one the run scenarios use unless AUDIO_FW names another.
+#
+# The files are readable for root only. The phone must run an Android build
+# that permits 'adb root' (userdebug, e.g., LineageOS) with USB debugging
+# enabled, and 'adb root' must be executed before this tool.
+#
+
+set -e
+
+FILES="aoc.bin cs35l41-dsp1-spk-prot.wmfw cs35l41-dsp1-spk-prot.bin \
+       R-cs35l41-dsp1-spk-prot.bin"
+
+GENODE_DIR=$(cd "$(dirname "$0")/../../.." && pwd)
+
+ARCHIVE=${1:-$GENODE_DIR/contrib/pixel_audio_firmware.tar}
+
+command -v adb > /dev/null || { echo "Error: 'adb' is not installed" >&2; exit 1; }
+
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+adb wait-for-device
+
+for file in $FILES; do
+	if ! adb pull "/vendor/firmware/$file" "$TMP_DIR/$file" > /dev/null; then
+		echo "Error: could not pull /vendor/firmware/$file, execute 'adb root' first" >&2
+		exit 1
+	fi
+done
+
+mkdir -p "$(dirname "$ARCHIVE")"
+tar cf "$ARCHIVE" --owner=0 --group=0 --numeric-owner -C "$TMP_DIR" $FILES
+
+echo "created $ARCHIVE"

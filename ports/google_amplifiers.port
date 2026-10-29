@@ -1,0 +1,12 @@
+LICENSE   := GPLv2
+VERSION   := git
+DOWNLOADS := google_amplifiers.git
+
+#
+# Speaker amplifiers of the Pixel 7 (Google's fork of the Cirrus CS35L41
+# codec driver and of wm_adsp) as used by the audio driver. The revision is
+# the one of the kernel manifest android-gs-pantah-6.1-android16.
+#
+URL(google_amplifiers) := https://android.googlesource.com/kernel/google-modules/amplifiers
+REV(google_amplifiers) := aba0cca145df5e55d1c5c4294a90bc382b0d2ec1
+DIR(google_amplifiers) := src/google_amplifiers
