@@ -1,0 +1,86 @@
+#!/bin/bash
+#
+# \brief  Split a serial capture of the Google Pixel 7 into one file per boot
+# \author Ivan Loskutov
+# \date   2026-10-29
+#
+# SPDX-License-Identifier: MIT
+#
+# A capture of the debug UART may span several boots: the boot loader, the
+# image it starts, a reset, the boot loader again, and so on. Reading such a
+# capture as one run mixes up the output of different boots. This tool
+# writes, next to <capture>.log, one file per stage, numbered by boot:
+#
+#   <capture>.NN.boot_loader.log  boot loader, up to "Starting Linux kernel"
+#   <capture>.NN.genode.log       the started OS, if it printed lines of
+#                                 Genode ("kernel initialized", "[init ...")
+#   <capture>.NN.other_os.log     the started OS otherwise (e.g. Android)
+#
+# A boot ends where the boot loader starts again ("MAX77759 VENDOR_SBUSW_CTRL"
+# or "[BL2]"). With '--running', the capture starts in a running OS instead
+# of the boot loader. Escape sequences, NUL bytes, and other control
+# characters except tabs are removed from the parts, so that grep does not
+# take them for binary files; the capture itself is not changed. A summary
+# of the parts is printed.
+#
+#   split_serial_log [--running] <capture>.log [...]
+#
+
+set -u
+
+RUNNING=0
+
+split_one()
+{
+	local in="$1"
+	[ -f "$in" ] || { echo "split_serial_log: '$in' is not a file" >&2; return 1; }
+
+	local base="${in%.log}"
+	rm -f "$base".[0-9][0-9].*.log
+
+	tr -d '\000' < "$in" |
+	sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/[\x01-\x08\x0b-\x1f\x7f]//g' | awk -v base="$base" -v running="$RUNNING" '
+		function open_part(kind) {
+			end_part()
+			kind_now = kind
+			fn = sprintf("%s.%02d.%s.log", base, boot, kind)
+			printf "" > fn
+		}
+		function end_part(   new) {
+			if (fn == "") return
+			close(fn)
+			if (kind_now == "os") {
+				new = sprintf("%s.%02d.%s.log", base, boot,
+				              genode ? "genode" : "other_os")
+				system("mv \"" fn "\" \"" new "\"")
+				fn = new
+			}
+			print fn
+			fn = ""
+		}
+		BEGIN {
+			boot = 1; genode = 0; bl2 = 0
+			open_part(running ? "os" : "boot_loader")
+		}
+		/^MAX77759 VENDOR_SBUSW_CTRL|\[BL2\]/ && (kind_now == "os" || bl2) {
+			end_part(); boot++; bl2 = 0; open_part("boot_loader")
+		}
+		/\[BL2\]/ { bl2 = 1 }
+		/Starting Linux kernel/ && kind_now == "boot_loader" {
+			print > fn
+			genode = 0; open_part("os")
+			next
+		}
+		kind_now == "os" && /^(kernel initialized|\[init[] ])/ { genode = 1 }
+		{ print > fn }
+		END { end_part() }
+	' | while read -r f; do
+		printf "  %-44s %6s lines\n" "$(basename "$f")" "$(wc -l < "$f")"
+	done
+
+	echo "  Genode boots: $(ls "$base".[0-9][0-9].genode.log 2>/dev/null | wc -l)"
+}
+
+[ "${1:-}" = "--running" ] && { RUNNING=1; shift; }
+[ $# -ge 1 ] || { echo "usage: $0 [--running] <capture>.log [...]" >&2; exit 1; }
+for f in "$@"; do split_one "$f"; done
