@@ -1,0 +1,39 @@
+#
+# Write-combined I/O memory on the Google Pixel 7
+#
+# 'test-io_mem_wc' maps one page of I/O memory write-combined directly from
+# core and reads it with unaligned loads. It logs "PASS" if every load
+# returned the bytes at its address. If the page is mapped as device memory
+# instead of normal non-cacheable memory, the first unaligned load is an
+# alignment fault ("MMU-fault ... ESR=0x92000021") and the test stops.
+#
+
+assert {[have_board google_pixel7]}
+
+build {
+	core init lib/ld
+	test/io_mem_wc
+}
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start test-io_mem_wc
+  + route | + any-service | + parent
+-
+}
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
