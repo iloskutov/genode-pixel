@@ -77,6 +77,8 @@ Bootstrap::Platform::Board::Board()
 		Memory_region { 0x880000000UL, 0x180000000UL }),
 	late_ram_regions(Memory_region { }),
 	core_mmio(Memory_region { ::Board::UART_BASE, ::Board::UART_SIZE },
+	          /* I2C of the MAX77759, the serial reset monitor writes the boot mode */
+	          Memory_region { ::Board::PMIC_I2C_BASE, ::Board::PMIC_I2C_SIZE },
 	          Memory_region { ::Board::Cpu_mmio::IRQ_CONTROLLER_DISTR_BASE,
 	                          ::Board::Cpu_mmio::IRQ_CONTROLLER_DISTR_SIZE },
 	          Memory_region { ::Board::Cpu_mmio::IRQ_CONTROLLER_REDIST_BASE,

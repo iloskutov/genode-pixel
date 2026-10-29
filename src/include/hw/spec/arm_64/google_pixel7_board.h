@@ -38,6 +38,10 @@ namespace Hw::Google_pixel7_board {
 		UART_SIZE  = 0x100,
 		UART_CLOCK = 0,
 
+		/* I2C controller of USI13, the bus of the MAX77759 (REBOOT=serial) */
+		PMIC_I2C_BASE = 0x10d60000,
+		PMIC_I2C_SIZE = 0x1000,
+
 		CACHE_LINE_SIZE_LOG2 = 6, /* 64 bytes */
 	};
 
