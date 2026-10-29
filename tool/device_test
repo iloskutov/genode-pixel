@@ -1,0 +1,317 @@
+#!/bin/bash
+#
+# \brief  Build a run scenario, boot it on the Google Pixel 7, capture the log
+# \author Ivan Loskutov
+# \date   2026-10-29
+#
+# SPDX-License-Identifier: MIT
+#
+#   device_test [--follow] <scenario> [seconds]
+#   device_test [--follow] --capture [seconds] [name]
+#   device_test --reset
+#
+# <scenario> is the name of a run script, with or without 'run/'. The tool
+# builds the image with
+#
+#   make run/<scenario> KERNEL=hw BOARD=google_pixel7 REBOOT=serial
+#
+# in the build directory, brings the phone into its boot loader (from
+# Android via 'adb reboot bootloader'), starts the serial capture, boots the
+# image with 'fastboot boot', captures for <seconds> (default 30), and
+# reboots the phone into its boot loader by sending "RST" over the serial
+# line (the reset monitor of REBOOT=serial). The capture goes on until the
+# phone is back in fastboot or ADB mode. If the tool ends in another way
+# once the image was booted (error, Ctrl-C, kill), it sends "RST" as well.
+# Nothing is flashed.
+#
+# '--capture' records the serial output of the image that is running,
+# without booting or resetting anything (default 60 s). '--reset' only
+# sends "RST". With '--follow', the serial capture is also shown on stdout
+# while it is written.
+#
+# Each run gets its own directory <log dir>/<name>_<date>_<time>, and
+# <log dir>/latest points to it:
+#
+#   run.log           steps of this tool, revisions of the repositories,
+#                     image, output of adb and fastboot
+#   build.log         output of make
+#   serial.log        the serial capture, unchanged
+#   serial.NN.*.log   the capture split per boot (tool/split_serial_log)
+#
+# Environment:
+#
+#   PIXEL_LOG_DIR    log directory (default ~/tmp/pixel-logs)
+#   PIXEL_BUILD_DIR  build directory (default <genode>/build/arm_v8a)
+#   PIXEL_SERIAL     serial device of the debug UART (default /dev/ttyACM0)
+#   PHONE_SERIAL     USB serial number of the phone, if several are attached
+#
+# Variables of a run script (e.g. GENODE_WIFI_SSID) are taken from the
+# environment by make.
+#
+
+set -u
+
+TOOL_DIR="$(cd "$(dirname "$0")" && pwd)"
+PIXEL_DIR="$(dirname "$TOOL_DIR")"
+GENODE_DIR="$(cd "$PIXEL_DIR/../.." && pwd)"
+
+LOG_DIR="${PIXEL_LOG_DIR:-$HOME/tmp/pixel-logs}"
+BUILD_DIR="${PIXEL_BUILD_DIR:-$GENODE_DIR/build/arm_v8a}"
+SERIAL="${PIXEL_SERIAL:-/dev/ttyACM0}"
+BAUD=115200
+
+ADB=(adb)
+FASTBOOT=(fastboot)
+if [ -n "${PHONE_SERIAL:-}" ]; then
+	ADB+=(-s "$PHONE_SERIAL")
+	FASTBOOT+=(-s "$PHONE_SERIAL")
+fi
+
+die() { echo "Error: $*" >&2; exit 1; }
+
+RUN_DIR=""
+log() { echo "$*" | tee -a "$RUN_DIR/run.log"; }
+
+check_serial()
+{
+	[ -e "$SERIAL" ] || die "serial device $SERIAL not found"
+	if pgrep -fx "cat $SERIAL" >/dev/null; then
+		die "another reader of $SERIAL is running"; fi
+	stty -F "$SERIAL" "$BAUD" raw -echo || die "cannot configure $SERIAL"
+}
+
+send_reset() { printf 'RST\n' > "$SERIAL"; }
+
+# one run at a time: runs share the build directory and the phone
+lock_run()
+{
+	mkdir -p "$LOG_DIR" || die "cannot create $LOG_DIR"
+	exec 9> "$LOG_DIR/.device_test.lock"
+	flock -n 9 || die "another run of device_test is active"
+}
+
+new_run_dir()
+{
+	RUN_DIR="$LOG_DIR/${1}_$(date +%Y%m%d_%H%M%S)"
+	mkdir -p "$RUN_DIR" || die "cannot create $RUN_DIR"
+	ln -sfn "$(basename "$RUN_DIR")" "$LOG_DIR/latest"
+}
+
+# the phone appears in the boot loader's fastboot mode, or not
+in_fastboot()
+{
+	local devs
+	devs="$("${FASTBOOT[@]}" devices 2>/dev/null)"
+	if [ -n "${PHONE_SERIAL:-}" ]; then
+		grep -q "^$PHONE_SERIAL" <<< "$devs"
+	else
+		[ -n "$devs" ]
+	fi
+}
+
+in_adb() { "${ADB[@]}" get-state 2>/dev/null | grep -q '^device$'; }
+
+wait_fastboot()
+{
+	local i
+	for i in $(seq 1 "$1"); do
+		in_fastboot && return 0
+		sleep 1
+	done
+	return 1
+}
+
+wait_back()
+{
+	local i
+	for i in $(seq 1 "$1"); do
+		if in_fastboot; then log "Phone back in fastboot mode";        return 0; fi
+		if in_adb;      then log "Warning: phone came back in Android"; return 0; fi
+		sleep 1
+	done
+	return 1
+}
+
+SERIAL_PID=""
+FOLLOW_PID=""
+stop_capture()
+{
+	[ -n "$SERIAL_PID" ] || return
+	kill "$SERIAL_PID" 2>/dev/null
+	wait "$SERIAL_PID" 2>/dev/null
+	SERIAL_PID=""
+
+	# tail ends by itself once the capture has ended
+	[ -n "$FOLLOW_PID" ] && wait "$FOLLOW_PID" 2>/dev/null
+	FOLLOW_PID=""
+}
+
+# an image booted by this tool is reset however the tool ends
+RESET_PENDING=0
+on_exit()
+{
+	stop_capture
+	if [ "$RESET_PENDING" = 1 ]; then
+		echo "Tool ended before the reset, sending RST" >&2
+		send_reset
+	fi
+}
+
+start_capture()
+{
+	: > "$RUN_DIR/serial.log"
+	cat "$SERIAL" > "$RUN_DIR/serial.log" &
+	SERIAL_PID=$!
+	if [ "$FOLLOW" = 1 ]; then
+		tail -n +1 -f --pid="$SERIAL_PID" "$RUN_DIR/serial.log" &
+		FOLLOW_PID=$!
+	fi
+	trap on_exit EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+}
+
+summary()
+{
+	log ""
+	log "Serial capture split per boot:"
+	"$TOOL_DIR/split_serial_log" "$@" "$RUN_DIR/serial.log" | tee -a "$RUN_DIR/run.log"
+	log ""
+	log "Logs: $RUN_DIR"
+}
+
+
+#
+# The rest is one block, read by bash as a whole before it runs, so that a
+# change of this file during a test does not affect the test
+#
+{
+
+FOLLOW=0
+[ "${1:-}" = "--follow" ] && { FOLLOW=1; shift; }
+
+case "${1:-}" in
+
+--reset)
+	[ $# -eq 1 ] || die "usage: $0 --reset"
+	check_serial
+	send_reset
+	echo "RST sent on $SERIAL"
+	exit 0
+	;;
+
+--capture)
+	SECONDS_TO_CAPTURE="${2:-60}"
+	case "$SECONDS_TO_CAPTURE" in ''|*[!0-9]*) die "seconds must be a number";; esac
+	lock_run
+	check_serial
+	new_run_dir "${3:-capture}"
+	log "Capture of the running image on $SERIAL for ${SECONDS_TO_CAPTURE}s"
+	start_capture
+	sleep "$SECONDS_TO_CAPTURE"
+	stop_capture
+	summary --running
+	exit 0
+	;;
+
+''|-*)
+	die "usage: $0 [--follow] <scenario> [seconds] | [--follow] --capture [seconds] [name] | --reset"
+	;;
+esac
+
+SCENARIO="${1#run/}"
+TIMEOUT="${2:-30}"
+case "$TIMEOUT" in ''|*[!0-9]*) die "seconds must be a number";; esac
+[ $# -le 2 ] || die "too many arguments"
+[ -f "$BUILD_DIR/etc/build.conf" ] || die "no build directory at $BUILD_DIR"
+
+lock_run
+check_serial
+new_run_dir "$SCENARIO"
+
+log "=== $SCENARIO, capture ${TIMEOUT}s ==="
+for repo in "$GENODE_DIR" "$PIXEL_DIR"; do
+	log "Revision of $repo: $(git -C "$repo" describe --always --dirty 2>&1)"
+done
+
+#
+# Build
+#
+log "Building run/$SCENARIO (build.log)..."
+IMAGE="$BUILD_DIR/var/run/$SCENARIO.img"
+rm -f "$IMAGE"
+make -C "$BUILD_DIR" "run/$SCENARIO" KERNEL=hw BOARD=google_pixel7 REBOOT=serial \
+	> "$RUN_DIR/build.log" 2>&1
+BUILD_STATUS=$?
+if [ $BUILD_STATUS -ne 0 ] || [ ! -f "$IMAGE" ] ||
+   ! grep -q "Created boot image var/run/$SCENARIO.img" "$RUN_DIR/build.log"; then
+	tail -n 20 "$RUN_DIR/build.log"
+	log "Error: build failed (exit status $BUILD_STATUS), nothing booted"
+	log "Logs: $RUN_DIR"
+	exit 1
+fi
+log "Image: $IMAGE ($(stat -c %s "$IMAGE") bytes, sha256 $(sha256sum "$IMAGE" | cut -d' ' -f1))"
+
+#
+# Boot loader
+#
+log "Waiting for the phone in fastboot or ADB mode..."
+MODE=""
+for i in $(seq 1 120); do
+	if in_fastboot; then MODE=fastboot; break; fi
+	if in_adb;      then MODE=adb;      break; fi
+	sleep 1
+done
+case "$MODE" in
+fastboot) log "Phone in fastboot mode" ;;
+adb)
+	log "Phone in ADB mode, rebooting into the boot loader"
+	"${ADB[@]}" reboot bootloader >> "$RUN_DIR/run.log" 2>&1
+	wait_fastboot 60 || { log "Error: phone not in fastboot mode after 60s"; exit 1; }
+	log "Phone in fastboot mode"
+	;;
+*)
+	log "Error: phone not found in fastboot or ADB mode after 120s"
+	exit 1
+	;;
+esac
+
+#
+# Boot and capture
+#
+start_capture
+RESET_PENDING=1
+log "Booting $SCENARIO.img via fastboot boot..."
+"${FASTBOOT[@]}" boot "$IMAGE" >> "$RUN_DIR/run.log" 2>&1
+BOOT_STATUS=$?
+if [ $BOOT_STATUS -ne 0 ]; then
+	stop_capture
+	log "Error: fastboot boot failed (exit status $BOOT_STATUS)"
+	summary
+	exit 1
+fi
+
+log "Capturing $SERIAL for ${TIMEOUT}s..."
+sleep "$TIMEOUT"
+
+#
+# Reset into the boot loader, the capture goes on until the phone is back
+#
+resets() { grep -ac '\[BL2\]' "$RUN_DIR/serial.log"; }
+
+RESETS=$(resets)
+log "Sending RST..."
+send_reset
+RESET_PENDING=0
+if ! wait_back 30; then
+	if [ "$(resets)" -eq "$RESETS" ]; then
+		log "No reset seen on $SERIAL after 30s, sending RST again..."
+		send_reset
+	fi
+	wait_back 90 || log "Warning: phone not back, reset it by hand"
+fi
+stop_capture
+
+summary
+exit
+}
