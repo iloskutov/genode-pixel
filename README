@@ -27,9 +27,19 @@ it for projects that do not accept LLM-assisted contributions.
 Usage
 -----
 
-The repository is meant to be placed at 'repos/pixel' within the Genode
-source tree. The following steps are executed in the root directory of the
-Genode source tree. They require the Genode tool chain.
+To build, use the branch 'pixel7' of the author's Genode fork. It includes
+patches that are not in mainline yet or cannot be added to mainline because
+they are LLM-assisted:
+
+! git clone -b pixel7 https://github.com/iloskutov/genode.git
+
+Then place this repository at 'repos/pixel' within the Genode source tree:
+
+! cd genode
+! git clone https://github.com/iloskutov/genode-pixel.git repos/pixel
+
+The following steps are executed in the root directory of the Genode source
+tree. They require the Genode tool chain.
 
 Create a build directory for the 64-bit ARM architecture:
 
