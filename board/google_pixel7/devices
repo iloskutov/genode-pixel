@@ -261,4 +261,21 @@ devices
   + clock pcie1-drv-apb
   + clock pcie1-phy-apb
   + clock pcie1-iocc
+
++ device gpu | type: arm,mali-valhall-csf
+  .
+  . Mali-G710 (mali@28000000). The interrupts are in the order of the
+  . device tree of the driver, an interrupt number is the SPI number of
+  . the vendor's device tree plus 32. The power domains are pd_g3d and
+  . pd_embedded_g3d.
+  .
+  + io_mem | address: 0x28000000 | size: 0x480000
+  + irq    | number: 361
+    . JOB
+  + irq    | number: 362
+    . MMU
+  + irq    | number: 360
+    . GPU
+  + power-domain g3d-power
+  + power-domain g3d-cores-power
 -

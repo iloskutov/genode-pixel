@@ -87,6 +87,8 @@ struct Driver::Pmu : private Noncopyable
 		PMU_SIZE = 0x4000,
 
 		/* offsets of the power domains within the register block */
+		PD_G3D_OFFSET          = 0x1e00,
+		PD_EMBEDDED_G3D_OFFSET = 0x2000,
 		PD_HSI0_OFFSET = 0x2080,
 		PD_DPU_OFFSET  = 0x2200,
 		PD_DISP_OFFSET = 0x2280,
@@ -107,6 +109,12 @@ struct Driver::Pmu : private Noncopyable
 	 */
 	Power_domain _usb_power  { _powers, "usb-power",
 	                           _pmu.range_at(PD_HSI0_OFFSET), nullptr };
+
+	/* GPU: pd_g3d, and pd_embedded_g3d with pd_g3d as parent */
+	Power_domain _g3d_power       { _powers, "g3d-power",
+	                                _pmu.range_at(PD_G3D_OFFSET), nullptr };
+	Power_domain _g3d_cores_power { _powers, "g3d-cores-power",
+	                                _pmu.range_at(PD_EMBEDDED_G3D_OFFSET), &_g3d_power };
 
 	Pmu(Genode::Env &env, Powers &powers) : _env(env), _powers(powers) { }
 };
