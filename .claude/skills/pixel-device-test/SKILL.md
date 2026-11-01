@@ -97,7 +97,7 @@ passed. Beyond that:
 - Capture times: 30 s (default) suits most scenarios; give
   `exynos_ufs_pixel` and `gpu_panthor_pixel` 45 s, `audio_pixel` 60 s,
   `wifi_fetchurl_pixel` and
-  `usb_gadget_pixel` 90 s.
+  `usb_gadget_pixel`, `usb_acm_pixel` 90 s.
 - `keys_pixel` logs nothing at start; only a key press shows that it works.
 - `audio_pixel` and `wifi_fetchurl_pixel` need files outside the tree:
   the archives of `tool/pull_audio_firmware` and `tool/pull_wifi_firmware`
@@ -106,7 +106,7 @@ passed. Beyond that:
   audible only the user can say. Keep the volume low (`VOLUME`, default
   0.02 for the tone): there is no speaker protection.
 - Touch, keys, the panel (`exynos_fb_pixel`, `demo_pixel`), and the sound
-  (`audio_pixel`) need the user at the phone, `usb_gadget_pixel` needs
+  (`audio_pixel`) need the user at the phone, `usb_gadget_pixel` and `usb_acm_pixel` need
   `repos/pixel/tool/usb_echo_check` on the PC while the capture runs.
   Start the tool with a long capture in the background, ask the user, then
   read the log. Do not claim a visual or manual result the user did not
