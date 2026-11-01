@@ -1,0 +1,256 @@
+#
+# glmark2 on the Mali-G710 of the Google Pixel 7
+#
+# glmark2 prints one line per scene and the score at the end, the mean of the
+# frame rates of the scenes:
+#
+#   [init -> glmark2] [texture] texture-filter=mipmap: FPS: N FrameTime: T ms
+#   [init -> glmark2] glmark2 Score: N
+#
+# The test succeeded when glmark2 logs its score and exits with the value 0.
+# Whether the scenes appear on the panel only a person can say. The short list
+# takes about 110 s with the default duration.
+#
+# A frame ends with eglSwapBuffers, which waits for the GPU and copies the frame
+# into the Gui buffer, unless OFFSCREEN=yes. The GPU's clocks stay as the boot
+# loader left them.
+#
+# Building
+# ~~~~~~~~
+#
+# The run script builds the drivers and the libraries of the base system from
+# this tree, and names a missing port. The GPU firmware comes from a port:
+#
+#   tool/ports/prepare_port mali_firmware
+#
+# Mesa and glmark2 are packages of the repository 'goa-packages'. The run script
+# neither builds nor downloads them: it takes them from the depot of this tree,
+# at the versions at 'import_from_depot' below, and stops with "missing depot
+# archives" if they are not there. Get them in one of two ways.
+#
+# Build them with Goa, from 'goa-packages', after the API archives of the tree
+# are created (see the README of 'goa-packages' for this and the prerequisites):
+#
+#   goa export -C mesa26
+#   goa export -C glmark2_26
+#
+# Or download the published archives, from the Genode directory, once the depot
+# user is set up (README of 'goa-packages', "Using the depot in a Genode tree").
+# The dependencies come along, the signatures are checked:
+#
+#   tool/depot/download iloskutov_pixel7/bin/arm_v8a/mesa26/2026-10-31 \
+#                       iloskutov_pixel7/bin/arm_v8a/glmark2_26/2026-10-31
+#
+# With a new version of a package, update the version in this file.
+#
+# Running
+# ~~~~~~~
+#
+# From the build directory, this creates 'var/run/glmark2_mali_pixel.img':
+#
+#   make run/glmark2_mali_pixel KERNEL=hw BOARD=google_pixel7
+#
+# To also boot the image on the phone and capture the log, from the Genode
+# directory:
+#
+#   repos/pixel/tool/device_test glmark2_mali_pixel 125
+#
+# Environment variables:
+#
+#   SCENES=short    short (eight scenes), all (glmark2's list), or benchmark
+#                    descriptions separated by blanks, e.g.,
+#                    SCENES="texture terrain:bloom=false"
+#   DURATION=5       seconds per scene
+#   SIZE=800x600     window size
+#   OFFSCREEN=yes    render into a framebuffer object with glFinish per frame:
+#                    nothing is copied, the panel shows nothing
+#   GLMARK2_RAM=1G   RAM of glmark2
+#   GPU_RAM=512M     RAM of the GPU driver, the source of all buffer objects
+#
+
+assert {[have_board google_pixel7]}
+
+proc env_or { name default } {
+	return [expr {[info exists ::env($name)] ? $::env($name) : $default}] }
+
+set duration    [env_or DURATION    5]
+set size        [env_or SIZE        800x600]
+set glmark2_ram [env_or GLMARK2_RAM 1G]
+set gpu_ram     [env_or GPU_RAM     512M]
+set mali_fw     [exec [genode_dir]/tool/ports/current --no-print-directory mali_firmware]/mali_csffw.bin
+
+if {![file isfile $mali_fw]} {
+	puts stderr "Error: firmware missing, execute 'tool/ports/prepare_port mali_firmware'"
+	exit 1
+}
+
+if {![regexp {^[0-9]+(\.[0-9]+)?$} $duration]} {
+	puts stderr "Error: DURATION must be a number of seconds (is '$duration')"
+	exit 1
+}
+
+if {![regexp {^[0-9]+x[0-9]+$} $size]} {
+	puts stderr "Error: SIZE must be WxH (is '$size')"
+	exit 1
+}
+
+set scenes [env_or SCENES short]
+
+if {$scenes eq "short"} {
+	set scenes {
+		texture:texture-filter=mipmap
+		shading:shading=phong
+		bump:bump-render=high-poly
+		build:use-vbo=true
+		buffer:update-method=map
+		refract
+		terrain
+		jellyfish
+	}
+} elseif {$scenes eq "all"} {
+	set scenes {}
+}
+
+foreach scene $scenes {
+	if {![regexp {^[a-z0-9]+(:[-a-z0-9]+=[-a-zA-Z0-9.,;]+)*$} $scene]} {
+		puts stderr "Error: SCENES: '$scene' is no glmark2 benchmark description"
+		exit 1
+	}
+}
+
+set args [list glmark2 -s $size]
+if {[env_or OFFSCREEN no] eq "yes"} { lappend args --off-screen }
+
+# a benchmark without a scene name sets the default of the following ones
+lappend args -b ":duration=$duration"
+foreach scene $scenes { lappend args -b $scene }
+
+set arg_nodes ""
+foreach arg $args { append arg_nodes "    + arg | value: $arg\n" }
+
+build {
+	core init lib/ld timer
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/framebuffer/exynos
+	driver/gpu/panthor
+	server/nitpicker
+	lib/libc lib/libm lib/vfs lib/zlib lib/stdcxx lib/libpng lib/jpeg lib/vfs_gpu
+}
+
+create_boot_directory
+
+import_from_depot iloskutov_pixel7/src/mesa26/2026-10-31 \
+                  iloskutov_pixel7/src/glmark2_26/2026-10-31
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ affinity-space | width: 8 | height: 1
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start platform | caps: 200 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+  + config
+    + policy | label_prefix: gs201_pio | info: yes
+      + device gpio_far_alive
+    + policy | label_prefix: exynos_fb | info: yes
+      + device dpu
+      + device dsim0
+    + policy | label_prefix: panthor_gpu | info: yes
+      + device gpu
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start gs201_pio | caps: 150 | ram: 2M
+  + provides
+    + service Pin_state
+    + service Pin_control
+    + service IRQ
+  + config
+    + out panel_reset | bank: gpa7 | index: 1 | default: yes
+    + policy | label: exynos_fb -> gpa7-1 | pin: panel_reset
+  + route
+    + service Platform | + child platform
+    + any-service      | + parent
+
++ start nitpicker | caps: 150 | ram: 8M
+  + affinity | xpos: 4 | width: 1
+  + provides
+    + service Gui
+    + service Capture
+    + service Event
+  + config
+    + capture
+    + domain default | layer: 1 | content: client | label: no
+    + default-policy | domain: default
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start exynos_fb | caps: 500 | ram: 96M
+  + config | display: on
+  + route
+    + service ROM | label: dtb | + parent | label: exynos_fb-google_pixel7.dtb
+    + service Platform    | + child platform
+    + service Dma         | + child platform
+    + service Pin_state   | + child gs201_pio
+    + service Pin_control | + child gs201_pio
+    + service Capture     | + child nitpicker
+    + service Timer       | + child timer
+    + any-service         | + parent
+
++ start panthor_gpu | caps: 800 | ram: } $gpu_ram {
+  + provides | + service Gpu
+  + config | dtb: panthor-google_pixel7.dtb
+  + route
+    + service Timer    | + child timer
+    + service Platform | + child platform
+    + service Dma      | + child platform
+    + any-service      | + parent
+
++ start glmark2 | caps: 4000 | ram: } $glmark2_ram {
+  + binary glmark2_26
+  + affinity | xpos: 6 | width: 1
+  + config
+    + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc
+} $arg_nodes {    + vfs
+      + dir dev
+        + log
+        + inline rtc
+          : 2000-01-01 00:00
+      + dir data | + tar glmark2_assets.tar
+  + route
+    + service Gui   | + child nitpicker
+    + service Timer | + child timer
+    + service Gpu   | + child panthor_gpu
+    + service ROM   | label: mesa26_gpu.lib.so | + parent | label: mesa26_gpu-panfrost.lib.so
+    + any-service   | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+copy_file $mali_fw [run_dir]/genode/mali_csffw.bin
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
