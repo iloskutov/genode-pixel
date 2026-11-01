@@ -1,0 +1,10 @@
+LICENSE   := Arm (binary), LICENCE.mali_csffw of linux-firmware
+VERSION   := 930ef9046e3848df688d98b7d5e68154b031dc66
+DOWNLOADS := mali_csffw.file
+
+#
+# CSF firmware of the Mali-G710 of the Pixel 7 (GPU architecture 10.8), the
+# file of linux-firmware the panthor driver loads as ROM 'mali_csffw.bin'.
+#
+URL(mali_csffw) := https://gitlab.com/kernel-firmware/linux-firmware/-/raw/$(VERSION)/arm/mali/arch10.8/mali_csffw.bin
+SHA(mali_csffw) := a27847ea11f8efb3136340c3ba8aab413ae25145eeb4a7f64ff5edd829a2405b
