@@ -7,3 +7,9 @@ power-management firmware (ACPM).
 
 It is part of every driver scenario of this repository, e.g.,
 'run/exynos_fb_pixel'.
+
+With the config attribute 'rtc', it also serves the read-only Rtc session for
+the RTC of the S2MPG12 PMIC, which is behind the same firmware. The scenario
+'run/rtc_pixel' reads the time:
+
+! make run/rtc_pixel KERNEL=hw BOARD=google_pixel7

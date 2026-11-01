@@ -24,6 +24,7 @@
 #include <cmu.h>
 #include <pmu.h>
 #include <acpm.h>
+#include <rtc.h>
 #include <common.h>
 
 namespace Driver { struct Main; };
@@ -44,6 +45,9 @@ struct Driver::Main
 	Pmu  _pmu  { _env, _common.devices().powers() };
 	Acpm _acpm { _env, _common.devices().powers() };
 
+	/* RTC of the PMIC, served as Rtc with the config attribute 'rtc' */
+	Constructible<Pmic_rtc> _rtc { };
+
 	Main(Genode::Env & env) : _env(env)
 	{
 		_config_rom.sigh(_config_handler);
@@ -57,6 +61,9 @@ void Driver::Main::_handle_config()
 {
 	_config_rom.update();
 	_common.handle_config(_config_rom.node());
+
+	if (_config_rom.node().attribute_value("rtc", false) && !_rtc.constructed())
+		_rtc.construct(_env, _acpm);
 }
 
 

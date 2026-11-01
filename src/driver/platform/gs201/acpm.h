@@ -91,6 +91,10 @@ struct Driver::Acpm : private Noncopyable
 		PMIC_CHANNEL     = 0,       /* S2MPG12, main PMIC */
 		PMIC_CHANNEL_SUB = 1,       /* S2MPG13, sub PMIC  */
 		ACPM_FUNC_UPDATE = 2,
+		ACPM_FUNC_BULK_READ = 3,
+		ACPM_BULK_COUNT_SHIFT = 8,
+		ACPM_BULK_DATA_WORD   = 2,
+		ACPM_BULK_MAX         = 8,
 
 		/*
 		 * Layout of a PMIC command. First word: register in bits 0..7,
@@ -249,12 +253,13 @@ struct Driver::Acpm : private Noncopyable
 	/**
 	 * Update the bits of a PMIC register that are selected by 'mask'
 	 */
-	bool _pmic_update(uint8_t reg, uint8_t val, uint8_t mask, uint8_t channel)
+	bool _pmic_update(uint8_t reg, uint8_t val, uint8_t mask, uint8_t channel,
+	                  uint8_t type = PMIC_TYPE_PM)
 	{
 		uint32_t cmd[ACPM_CMD_WORDS] = { 0 };
 
 		cmd[0] = ((uint32_t)reg)
-		       | ((uint32_t)PMIC_TYPE_PM << PMIC_TYPE_SHIFT)
+		       | ((uint32_t)type << PMIC_TYPE_SHIFT)
 		       | ((uint32_t)(channel & PMIC_CHANNEL_MASK) << PMIC_CHANNEL_SHIFT);
 		cmd[1] = (uint32_t)ACPM_FUNC_UPDATE
 		       | ((uint32_t)val  << ACPM_UPDATE_VALUE_SHIFT)
@@ -264,6 +269,31 @@ struct Driver::Acpm : private Noncopyable
 			return false;
 
 		return ((cmd[1] >> ACPM_STATUS_SHIFT) & ACPM_STATUS_MASK) == 0;
+	}
+
+	/**
+	 * Read up to 'ACPM_BULK_MAX' consecutive registers of a PMIC block
+	 */
+	bool _pmic_bulk_read(uint8_t type, uint8_t reg, unsigned count, uint8_t *buf)
+	{
+		if (count > ACPM_BULK_MAX)
+			return false;
+
+		uint32_t cmd[ACPM_CMD_WORDS] = { 0 };
+
+		cmd[0] = ((uint32_t)reg) | ((uint32_t)type << PMIC_TYPE_SHIFT);
+		cmd[1] = (uint32_t)ACPM_FUNC_BULK_READ | (count << ACPM_BULK_COUNT_SHIFT);
+
+		if (!_send(_pmic_ch, cmd))
+			return false;
+
+		if (((cmd[1] >> ACPM_STATUS_SHIFT) & ACPM_STATUS_MASK) != 0)
+			return false;
+
+		for (unsigned i = 0; i < count; i++)
+			buf[i] = (uint8_t)(cmd[ACPM_BULK_DATA_WORD + i/4] >> (8*(i % 4)));
+
+		return true;
 	}
 
 	/*

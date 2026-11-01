@@ -1,0 +1,66 @@
+#
+# RTC of the Google Pixel 7
+#
+# The RTC is a function of the S2MPG12 PMIC behind the ACPM firmware, so
+# 'gs201_platform' serves it as Rtc with the config attribute 'rtc'. The
+# service is read-only. 'test-rtc' reads the time of two sessions four times,
+# with a second in between.
+#
+# The test succeeded when 'test-rtc' logs "--- RTC test finished ---", with a
+# plausible date in its lines and with the seconds advancing, and 'platform'
+# logs no error.
+#
+
+assert {[have_board google_pixel7]}
+
+build {
+	core init lib/ld timer
+	driver/platform/gs201
+	test/rtc
+}
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start platform | caps: 150 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+    + service Rtc
+  + config | rtc: yes
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start test-rtc
+  + config
+  + route
+    + service Rtc   | + child platform
+    + service Timer | + child timer
+    + any-service   | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
