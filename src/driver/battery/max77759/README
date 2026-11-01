@@ -1,0 +1,34 @@
+Battery state of the Google Pixel 7
+
+The component 'max77759_battery' reads the fuel gauge of the MAX77759 through
+an I2c session every 'period_ms' and writes the report 'battery':
+
+! battery | percent: 87 | voltage_mv: 4212 | current_ma: -312
+!         | charging: no | temp_c: 29
+
+'current_ma' is positive while current flows into the battery. After three
+failed periods in a row the last values get 'stale: yes'.
+
+The component never writes a register of the gauge, every access is a write
+of the register pointer and a two-byte read. The same bus carries the charger
+and the over-voltage protection, so the policy of 'gs201_i2c' should limit
+the session to the gauge with 'max_write: 1':
+
+! + allow  | bus_address: 0x36
+! + policy | label_prefix: battery | bus_address: 0x36 | max_write: 1
+
+Config, with the defaults:
+
+! config | period_ms: 5000 | rsense_uohm: 5000
+
+:period_ms:   period of the readings, at least 100.
+:rsense_uohm: sense resistor of the gauge, 5 mOhm on the Pixel 7.
+
+The register meanings and the rules of the monitor have no Genode
+dependencies ('gauge.h') and host tests:
+
+! make -C repos/pixel/src/driver/battery/max77759/test
+
+The scenario 'run/battery_pixel' logs the readings every two seconds:
+
+! make run/battery_pixel KERNEL=hw BOARD=google_pixel7

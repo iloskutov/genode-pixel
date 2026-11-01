@@ -1,0 +1,104 @@
+#
+# Battery state of the Google Pixel 7
+#
+# 'gs201_i2c' serves the I2C bus of USI13, 'max77759_battery' reads the fuel
+# gauge of the MAX77759 at 0x36 every two seconds and logs the values, which
+# it also reports as 'battery'. The driver's allow list holds 0x36 only, and
+# the session is limited to the register pointer ('max_write: 1'), so no
+# register of the gauge or of the charger on this bus can be written.
+#
+# The test succeeded when 'battery' logs a line "<percent>% <voltage> mV
+# <current> mA ..." with plausible values and no "error" or "stale".
+#
+
+assert {[have_board google_pixel7]}
+
+build {
+	core init lib/ld timer
+	server/report_rom
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/i2c/gs201
+	driver/battery/max77759
+}
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start report_rom | ram: 2M
+  + provides
+    + service Report
+    + service ROM
+  + config | verbose: yes
+  + route | + any-service | + parent
+
++ start platform | caps: 150 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+  + config
+    + policy | label_prefix: gs201_pio | info: yes
+      + device gpio_peric1
+    + policy | label_prefix: gs201_i2c | info: yes
+      + device hsi2c13
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start gs201_pio | caps: 150 | ram: 2M
+  + provides
+    + service Pin_state
+    + service Pin_control
+    + service IRQ
+  + config
+    + select hsi2c13_scl | bank: gpp25 | index: 0 | function: 2
+    + select hsi2c13_sda | bank: gpp25 | index: 1 | function: 2
+  + route
+    + service Platform | + child platform
+    + any-service      | + parent
+
++ start gs201_i2c | ram: 2M
+  + provides | + service I2c
+  + config | bus_speed_hz: 400000
+    + allow  | bus_address: 0x36
+      . the fuel gauge only, never the charger at 0x66
+    + policy | label_prefix: battery | bus_address: 0x36 | max_write: 1
+  + route
+    + service Platform | + child platform
+    + service Timer    | + child timer
+    + any-service      | + parent
+
++ start battery | ram: 2M
+  + binary max77759_battery
+  + config | period_ms: 2000
+  + route
+    + service I2c    | + child gs201_i2c
+    + service Timer  | + child timer
+    + service Report | + child report_rom
+    + any-service    | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
