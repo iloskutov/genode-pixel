@@ -1,0 +1,35 @@
+Driver for the Mali-G710 GPU of the Google Pixel 7
+
+The driver 'panthor_gpu' is a port of Linux's 'panthor' DRM driver for Mali CSF
+GPUs. Unlike the other drivers of this repository, it uses Genode's stock
+dde_linux base with the 'linux' port (6.18), not the Android tree.
+
+It provides Genode's Gpu session. The session interface is too narrow for
+panthor's uAPI, so all DRM ioctls but the mapping of a buffer object travel as
+messages through 'Gpu::Session::execute'. The protocol is described in
+'include/gpu/panthor_session.h'.
+
+The GPU needs its CSF firmware as ROM 'mali_csffw.bin', from linux-firmware's
+'arm/mali/arch10.8', which the port 'mali_firmware' downloads. The GPU's clocks
+stay as the boot loader left them, the driver does not scale them. The device
+tree of the driver is written by hand and built with it.
+
+Config, with the defaults:
+
+! config | dtb: panthor-google_pixel7.dtb | bo_cached: yes | test_ops: no
+
+:bo_cached: offer cached buffer objects to the clients.
+:test_ops:  serve the request type TEST_SLEEP.
+
+Sessions and ROMs: Platform and Dma (device 'gpu'), Timer, the ROMs named by
+'dtb' and 'mali_csffw.bin'.
+
+The validation and the relocation of the messages have host tests, which also
+compare the protocol's structures to the headers of the 'linux' port:
+
+! make -C repos/pixel/src/driver/gpu/panthor/test
+
+The scenario 'run/gpu_panthor_pixel' tests the session with a client that talks
+the protocol directly, without Mesa:
+
+! make run/gpu_panthor_pixel KERNEL=hw BOARD=google_pixel7

@@ -1,0 +1,54 @@
+/*
+ * \brief  Device tree of the Mali-G710 for the panthor driver (Pixel 7)
+ * \author Ivan Loskutov
+ * \date   2026-10-07
+ *
+ * Written for the binding of the upstream driver
+ * (Documentation/devicetree/bindings/gpu/arm,mali-valhall-csf.yaml); the
+ * vendor tree (gs201-gpu.dtsi, "arm,mali-midgard") has neither the
+ * interrupt names nor a clock that panthor could use, and mainline has no
+ * GPU node for the gs201.
+ *
+ * Addresses and interrupts: gs201-gpu.dtsi, mali@28000000, size 0x480000,
+ * SPI 328 / 329 / 330 = GPU / JOB / MMU (Genode irq 360 / 361 / 362).
+ *
+ * Not described, because the emulation has no provider for them:
+ * - power-domains (pd_g3d, pd_embedded_g3d): owned by the platform driver
+ * - mali-supply, operating-points-v2: the OPP layer is a stub
+ * The clock is a fixed-clock stand-in: the GPU's rate is set through ACPM
+ * DVFS domains, there is no clock node in the vendor tree. Its rate is the
+ * value clk_get_rate() reports to the driver, nothing else (clock.c).
+ */
+
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+	interrupt-parent = <&gic>;
+
+	gic: interrupt-controller@10400000 {
+		compatible = "arm,gic-v3";
+		#interrupt-cells = <3>;
+		#address-cells = <0>;
+		interrupt-controller;
+		reg = <0x0 0x10400000 0x0 0x10000>,
+		      <0x0 0x10440000 0x0 0x100000>;
+	};
+
+	gpu_clk: clock-gpu {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <400000000>;
+		clock-output-names = "gpu";
+	};
+
+	gpu: gpu@28000000 {
+		compatible = "arm,mali-valhall-csf";
+		reg = <0x0 0x28000000 0x0 0x480000>;
+		interrupts = <0 329 4>, <0 330 4>, <0 328 4>;
+		interrupt-names = "job", "mmu", "gpu";
+		clocks = <&gpu_clk>;
+		clock-names = "core";
+	};
+};

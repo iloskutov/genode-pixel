@@ -95,7 +95,8 @@ The header comment of a run script says what the scenario does and when it
 passed. Beyond that:
 
 - Capture times: 30 s (default) suits most scenarios; give
-  `exynos_ufs_pixel` 45 s, `audio_pixel` 60 s, `wifi_fetchurl_pixel` and
+  `exynos_ufs_pixel` and `gpu_panthor_pixel` 45 s, `audio_pixel` 60 s,
+  `wifi_fetchurl_pixel` and
   `usb_gadget_pixel` 90 s.
 - `keys_pixel` logs nothing at start; only a key press shows that it works.
 - `audio_pixel` and `wifi_fetchurl_pixel` need files outside the tree:

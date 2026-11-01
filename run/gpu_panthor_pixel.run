@@ -1,0 +1,102 @@
+#
+# Gpu session of the panthor GPU driver on the Google Pixel 7
+#
+# 'test-gpu_panthor' talks the protocol of include/gpu/panthor_session.h
+# directly, without Mesa, one step at a time. It logs a line before each step
+# and ends with "gpu_panthor: DONE" or "gpu_panthor: FAILED", which is the
+# result of the test. A line "... not implemented yet" is a dummy of the port
+# that stopped the driver, the step logged last reached it.
+#
+#   make run/gpu_panthor_pixel KERNEL=hw BOARD=google_pixel7
+#
+# The test covers the session, exchange buffer, malformed messages, a blocking
+# request, the requests of the DRM core, then the GPU: device queries, VM, buffer
+# object (mapping, pattern), VM bind, syncobjs, tiler heap, group with one queue,
+# group state, the submission of a command stream of two NOP instructions (the
+# first job the firmware executes), destruction, and cached buffer objects.
+#
+# Environment variables:
+#
+#   GPU_RAM=256M     RAM of the driver, the source of all buffer objects
+#   BO_CACHED=no     driver without cached buffer objects, the test then checks
+#                    that the flag BO_WB_MMAP is refused
+#
+
+assert {[have_board google_pixel7]}
+
+proc env_or { name default } {
+	return [expr {[info exists ::env($name)] ? $::env($name) : $default}] }
+
+set gpu_ram   [env_or GPU_RAM   256M]
+set bo_cached [env_or BO_CACHED yes]
+set mali_fw   [exec [genode_dir]/tool/ports/current --no-print-directory mali_firmware]/mali_csffw.bin
+
+if {![file isfile $mali_fw]} {
+	puts stderr "Error: firmware missing, execute 'tool/ports/prepare_port mali_firmware'"
+	exit 1
+}
+
+build {
+	core init lib/ld timer
+	driver/platform/gs201
+	driver/gpu/panthor
+	test/gpu_panthor
+}
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start platform | caps: 150 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+  + config
+    + policy | label_prefix: panthor_gpu | info: yes
+      + device gpu
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start panthor_gpu | caps: 800 | ram: } $gpu_ram {
+  + provides | + service Gpu
+  + config | dtb: panthor-google_pixel7.dtb
+           | test_ops: yes | bo_cached: } $bo_cached {
+  + route
+    + service Timer    | + child timer
+    + service Platform | + child platform
+    + service Dma      | + child platform
+    + any-service      | + parent
+
++ start test-gpu_panthor | caps: 150 | ram: 16M
+  + route
+    + service Timer | + child timer
+    + service Gpu   | + child panthor_gpu
+    + any-service   | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+copy_file $mali_fw [run_dir]/genode/mali_csffw.bin
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
