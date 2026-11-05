@@ -7,7 +7,7 @@ chip and the vendor's driver of PCIe channel 1, the link to the chip. The
 driver is configured and used like on other boards, see the README of the
 WiFi driver. It needs the ports 'pixel_linux', 'google_soc_gs', and
 'bcmdhd_wlan', the driver binary additionally 'wpa_supplicant', 'libnl',
-and 'openssl'.
+and 'openssl-minimal'.
 
 The power management of the link is not used: the chip stays powered and
 the link stays out of its low-power states. The phone's boot loader leaves

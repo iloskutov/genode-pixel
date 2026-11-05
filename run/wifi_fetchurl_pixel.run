@@ -58,9 +58,9 @@ build {
 	lib/vfs_jitterentropy
 	lib/vfs_lwip
 	lib/vfs_pipe
-	lib/curl
-	lib/libssl1
-	lib/libcrypto1
+	lib/curl-minimal
+	lib/libssl-minimal
+	lib/libcrypto-minimal
 	lib/zlib
 	app/fetchurl
 }
