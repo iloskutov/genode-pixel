@@ -42,7 +42,10 @@
 #
 #   PIXEL_LOG_DIR    log directory (default ~/tmp/pixel-logs)
 #   PIXEL_BUILD_DIR  build directory (default <genode>/build/arm_v8a)
-#   PIXEL_SERIAL     serial device of the debug UART (default /dev/ttyACM0)
+#   PIXEL_UART_ID    USB ID vendor:product of the UART adapter (default
+#                    1a86:55d3), its serial device is looked up by this ID, a
+#                    name like /dev/ttyACM0 may change with every boot of the PC
+#   PIXEL_SERIAL     serial device of the debug UART, instead of the lookup
 #   PHONE_SERIAL     USB serial number of the phone, if several are attached
 #
 # Variables of a run script (e.g. GENODE_WIFI_SSID) are taken from the
@@ -57,7 +60,29 @@ GENODE_DIR="$(cd "$PIXEL_DIR/../.." && pwd)"
 
 LOG_DIR="${PIXEL_LOG_DIR:-$HOME/tmp/pixel-logs}"
 BUILD_DIR="${PIXEL_BUILD_DIR:-$GENODE_DIR/build/arm_v8a}"
-SERIAL="${PIXEL_SERIAL:-/dev/ttyACM0}"
+UART_ID="${PIXEL_UART_ID:-1a86:55d3}"
+
+# serial devices of the USB device with the ID vendor:product
+serial_of_usb_id()
+{
+	local tty dev
+	for tty in /sys/class/tty/ttyACM* /sys/class/tty/ttyUSB*; do
+		[ -e "$tty/device" ] || continue
+		dev=$(readlink -f "$tty/device")
+		while [ "$dev" != / ] && [ ! -e "$dev/idVendor" ]; do dev=$(dirname "$dev"); done
+		[ "$(cat "$dev/idVendor" 2>/dev/null):$(cat "$dev/idProduct" 2>/dev/null)" = "$1" ] &&
+			echo "/dev/$(basename "$tty")"
+	done
+}
+
+if [ -n "${PIXEL_SERIAL:-}" ]; then
+	SERIAL="$PIXEL_SERIAL"
+else
+	SERIAL=$(serial_of_usb_id "$UART_ID")
+	[ "$(echo "$SERIAL" | grep -c .)" = 1 ] || {
+		echo "Error: not one UART adapter $UART_ID attached (set PIXEL_UART_ID or PIXEL_SERIAL)" >&2
+		exit 1; }
+fi
 BAUD=115200
 
 ADB=(adb)
