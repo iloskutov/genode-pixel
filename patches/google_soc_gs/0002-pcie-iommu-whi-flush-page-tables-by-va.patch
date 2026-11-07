@@ -1,0 +1,28 @@
+exynos-pcie-iommu-whi: flush the page tables by virtual address
+
+The modem's PCIe SysMMU reads its page tables from memory. The driver
+flushes them with dma_sync_single_for_device() on virt_to_phys() of the
+table, which DDE Linux turns back into a virtual address through __va().
+There is no linear map in a component, so the tables are cleaned and
+invalidated by their virtual address instead.
+
+--- a/src/google_soc_gs/drivers/iommu/exynos-pcie-iommu-whi.c
++++ b/src/google_soc_gs/drivers/iommu/exynos-pcie-iommu-whi.c
+@@ -89,10 +89,13 @@
+ 
+ static inline void pgtable_flush(void *vastart, void *vaend)
+ {
+-	/* __dma_flush_area(vastart, vaend - vastart); */
+-	dma_sync_single_for_device(g_last_dev,
+-				   virt_to_phys(vastart),  vaend - vastart,
+-				   DMA_TO_DEVICE);
++	unsigned long addr;
++
++	/* clean and invalidate by VA, without a round trip through __va() */
++	for (addr = (unsigned long)vastart & ~63UL;
++	     addr < (unsigned long)vaend; addr += 64)
++		asm volatile("dc civac, %0" :: "r"(addr) : "memory");
++	asm volatile("dsb sy" ::: "memory");
+ }
+ 
+ static void __sysmmu_tlb_invalidate_all(void __iomem *sfrbase, int pcie_vid)

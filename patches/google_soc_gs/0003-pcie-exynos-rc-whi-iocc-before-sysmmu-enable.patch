@@ -1,0 +1,23 @@
+pcie-exynos-rc (dwc-whi): mark the SysMMU coherent before enabling it
+
+On the power-on of the modem's channel, pcie_sysmmu_enable() ran before
+establish_link() called set_iocc(), so the SysMMU's per-VID config was
+written without the shareability override while the root complex issued
+coherent inbound transactions. The CP's DMA read of its boot image failed
+at once (boot_stage 0x1ff, err_report 0x2000). The flag is set before the
+first enable now.
+
+--- a/src/google_soc_gs/drivers/pci/controller/dwc-whi/pcie-exynos-rc.c
++++ b/src/google_soc_gs/drivers/pci/controller/dwc-whi/pcie-exynos-rc.c
+@@ -3414,6 +3414,11 @@
+ 		}
+ #endif
+ 		/* Enable SysMMU */
++#if IS_ENABLED(CONFIG_EXYNOS_PCIE_IOMMU)
++		/* set_iocc() comes later, in establish_link */
++		if (exynos_pcie->use_sysmmu && exynos_pcie->use_cache_coherency)
++			pcie_sysmmu_set_use_iocc(pcie_ch_to_hsi(ch_num));
++#endif
+ 		if (exynos_pcie->use_sysmmu)
+ 			pcie_sysmmu_enable(pcie_ch_to_hsi(ch_num));
+ 

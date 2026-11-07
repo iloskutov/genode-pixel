@@ -1,0 +1,32 @@
+pcie-exynos-rc (dwc-whi): link width per power-on
+
+cpif asks for one lane on the boot link and two on the link after the
+CP's boot loader. The width of the dwc-whi root complex comes from the
+device tree only. exynos_pcie_rc_set_num_lanes() sets it for the next
+power-on, the modem driver calls it from its exynos_pcie_poweron().
+The device tree of the modem driver has no 'num-lanes', so that
+dw_pcie_setup() does not overwrite the width again.
+
+--- a/src/google_soc_gs/drivers/pci/controller/dwc-whi/pcie-exynos-rc.c
++++ b/src/google_soc_gs/drivers/pci/controller/dwc-whi/pcie-exynos-rc.c
+@@ -4286,6 +4286,20 @@
+ }
+ EXPORT_SYMBOL_GPL(exynos_pcie_rc_l1ss_ctrl);
+ 
++/* link width of the next power-on, cpif asks for one per link */
++void exynos_pcie_rc_set_num_lanes(int ch_num, int lanes)
++{
++	struct exynos_pcie *exynos_pcie = &g_pcie_rc[ch_num];
++
++	if (lanes < 1)
++		return;
++
++	exynos_pcie->num_lanes = lanes;
++	if (exynos_pcie->pci)
++		exynos_pcie->pci->num_lanes = lanes;
++}
++EXPORT_SYMBOL_GPL(exynos_pcie_rc_set_num_lanes);
++
+ /* to support CP driver */
+ int exynos_pcie_poweron(int ch_num, int spd)
+ {

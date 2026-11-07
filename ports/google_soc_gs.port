@@ -11,5 +11,8 @@ URL(google_soc_gs) := https://android.googlesource.com/kernel/google-modules/soc
 REV(google_soc_gs) := 057ab18a9cc0e318538b419eafc565a7fbe1d320
 DIR(google_soc_gs) := src/google_soc_gs
 
-PATCHES   := patches/google_soc_gs/0001-pcie-exynos-rc-wifi-channel.patch
+PATCHES   := patches/google_soc_gs/0001-pcie-exynos-rc-wifi-channel.patch \
+             patches/google_soc_gs/0002-pcie-iommu-whi-flush-page-tables-by-va.patch \
+             patches/google_soc_gs/0003-pcie-exynos-rc-whi-iocc-before-sysmmu-enable.patch \
+             patches/google_soc_gs/0004-pcie-exynos-rc-whi-set-num-lanes.patch
 PATCH_OPT := -p1
