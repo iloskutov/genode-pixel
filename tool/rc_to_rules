@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+#
+# \brief  Translate Android init .rc files into the rules of modem_orchestrator
+# \author Ivan Loskutov
+# \date   2026-11-07
+#
+# SPDX-License-Identifier: MIT
+#
+"""Translate Android init .rc files into the 'rules' ROM of modem_orchestrator.
+
+    tool/rc_to_rules [-o rules] cbd.rc rild_exynos.rc ...
+
+The orchestrator of the Goa project 'modem_orchestrator' starts the phone's
+daemons by these rules, as Android's init does by its .rc files. Understood:
+'service <name> <path> <args>' with the options class/disabled/oneshot
+(others are dropped and listed in a comment); 'on <trigger>' sections with
+start/stop/restart/setprop/mkdir/write/rm/class_start/class_stop. Triggers:
+one event, property:<name>=<value|*>, and '&&' of at most one event with
+property conditions. '${prop}' is kept verbatim (the orchestrator
+substitutes it). write/rm outside /data and every other command become
+'unsupported' nodes with file, line, and command.
+
+Tokenizing follows Android init: whitespace-separated tokens, "double quotes"
+group, a backslash escapes the next character, a backslash at the end of a
+line continues it, '#' starting a token comments out the rest of the line.
+Section keywords (on, service, import) start a section regardless of
+indentation.
+
+The rules are HID, a value that cannot be expressed in HID (a '|' or a
+control character) is an error.
+"""
+import argparse, os, sys
+
+
+class Rc_error(Exception):
+	pass
+
+
+def tokenize(text, name):
+	"""yield (line number, [tokens]) per logical line"""
+	lines = text.split("\n")
+	i = 0
+	while i < len(lines):
+		start = i + 1
+		line = lines[i].rstrip("\r")
+		i += 1
+		while line.endswith("\\") and i < len(lines):   # continuation, CRLF too
+			line = line[:-1] + " " + lines[i].rstrip("\r")
+			i += 1
+		tokens, cur, in_tok, quote, k = [], "", False, False, 0
+		while k < len(line):
+			c = line[k]
+			if c == "\\" and k + 1 < len(line):
+				# Android's tokenizer: \n \r \t \\ are the characters, any
+				# other escaped character stands for itself
+				cur += {"n": "\n", "r": "\r", "t": "\t"}.get(line[k + 1], line[k + 1])
+				in_tok = True; k += 2; continue
+			if quote:
+				if c == '"': quote = False
+				else: cur += c
+				k += 1; continue
+			if c == '"':
+				quote = True; in_tok = True; k += 1; continue
+			if c in " \t\r":
+				if in_tok: tokens.append(cur); cur, in_tok = "", False
+				k += 1; continue
+			if c == "#" and not in_tok:
+				break
+			cur += c; in_tok = True; k += 1
+		if quote:
+			raise Rc_error("%s:%d: unterminated quote" % (name, start))
+		if in_tok:
+			tokens.append(cur)
+		if tokens:
+			yield start, tokens
+
+
+def check(value, what):
+	"""a HID attribute value must not hold '|' or control characters, and
+	HID trims leading and trailing blanks, which would change the value"""
+	if "|" in value or any(ord(c) < 32 for c in value) or value != value.strip():
+		raise Rc_error("%s '%s' cannot be expressed in HID" % (what, value))
+	return value
+
+
+def node(head, attrs):
+	"""one line of a HID node: '+ type' and its attributes"""
+	return head + "".join(" | %s:%s" % (k, " " + check(v, k) if v else "") for k, v in attrs)
+
+
+def parse_trigger(tokens, where):
+	parts = " ".join(tokens).split("&&")
+	event, props = None, []
+	for p in (x.strip() for x in parts):
+		if not p:
+			raise Rc_error("%s: empty trigger" % where)
+		if p.startswith("property:"):
+			name, eq, value = p[len("property:"):].partition("=")
+			if not eq or not name:
+				raise Rc_error("%s: bad property trigger '%s'" % (where, p))
+			props.append((name, value))
+		else:
+			if event is not None:
+				raise Rc_error("%s: more than one event in trigger" % where)
+			event = p
+	return event, props
+
+
+def translate(files):
+	services, ons, unsupported, ignored = [], [], [], []
+	for name, text in files:
+		section = None
+		for line, tok in tokenize(text, name):
+			where = "%s:%d" % (name, line)
+			kw = tok[0]
+			if kw == "on":
+				if len(tok) < 2:
+					raise Rc_error("%s: 'on' without trigger" % where)
+				event, props = parse_trigger(tok[1:], where)
+				section = {"kind": "on", "event": event, "props": props, "cmds": [],
+				           "file": name, "line": line}
+				ons.append(section)
+			elif kw == "service":
+				if len(tok) < 3:
+					raise Rc_error("%s: service needs a name and a path" % where)
+				section = {"kind": "service", "name": tok[1], "path": tok[2], "args": tok[3:],
+				           "class": None, "disabled": False, "oneshot": False, "ignored": []}
+				services.append(section)
+			elif kw == "import":
+				unsupported.append((name, line, " ".join(tok)))
+				section = None
+			elif section is None:
+				raise Rc_error("%s: '%s' outside a section" % (where, kw))
+			elif section["kind"] == "service":
+				if kw == "class" and len(tok) > 1:
+					section["class"] = section["class"] or tok[1]
+				elif kw in ("disabled", "oneshot"):
+					section[kw] = True
+				else:
+					section["ignored"].append(kw)
+			else:
+				cmd = command(tok, where)
+				if cmd is None:
+					unsupported.append((name, line, " ".join(tok)))
+				else:
+					section["cmds"].append(cmd)
+
+	out = ["rules",
+	       ". generated by rc_to_rules from: %s" % " ".join(n for n, _ in files)]
+	for s in services:
+		if s["ignored"]:
+			out.append(". ignored service options: %s: %s" % (s["name"], " ".join(s["ignored"])))
+	for s in services:
+		attrs = [("path", s["path"]), ("class", s["class"] or "default")]
+		if s["disabled"]: attrs.append(("disabled", "yes"))
+		if s["oneshot"]:  attrs.append(("oneshot", "yes"))
+		out.append(node("+ service " + check(s["name"], "service name"), attrs))
+		for a in s["args"]:
+			out.append(node("  + arg", [("value", a)]))
+	for o in ons:
+		attrs = [("event", o["event"])] if o["event"] else []
+		attrs += [("file", o["file"]), ("line", str(o["line"]))]
+		out.append(node("+ on", attrs))
+		for n, v in o["props"]:
+			out.append(node("  + property", [("name", n), ("value", v)]))
+		for kw, attrs in o["cmds"]:
+			out.append(node("  + " + kw, attrs))
+	for f, l, c in unsupported:
+		out.append(node("+ unsupported", [("file", f), ("line", str(l)), ("command", c)]))
+	out.append("-")
+	return "\n".join(out) + "\n"
+
+
+def command(tok, where):
+	"""(node type, attributes) of a supported command, None if unsupported"""
+	kw, a = tok[0], tok[1:]
+	def need(n):
+		if len(a) < n:
+			raise Rc_error("%s: '%s' needs %d argument(s)" % (where, kw, n))
+	if kw in ("start", "stop", "restart"):
+		need(1); return kw, [("service", a[0])]
+	if kw == "setprop":
+		need(1); return kw, [("name", a[0]), ("value", a[1] if len(a) > 1 else "")]
+	if kw == "mkdir":
+		need(1); return kw, [("path", a[0])] + ([("mode", a[1])] if len(a) > 1 else [])
+	if kw == "write":
+		need(1)
+		if not a[0].startswith("/data/"): return None
+		return kw, [("path", a[0]), ("value", a[1] if len(a) > 1 else "")]
+	if kw == "rm":
+		need(1)
+		if not a[0].startswith("/data/"): return None
+		return kw, [("path", a[0])]
+	if kw in ("class_start", "class_stop"):
+		need(1); return kw, [("name", a[0])]
+	return None
+
+
+def main():
+	ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+	ap.add_argument("-o", "--out", help="output file (default: stdout)")
+	ap.add_argument("files", nargs="+")
+	args = ap.parse_args()
+	try:
+		text = translate([(os.path.basename(f), open(f, errors="replace").read()) for f in args.files])
+	except Rc_error as e:
+		sys.exit("rc_to_rules: %s" % e)
+	if args.out:
+		open(args.out, "w").write(text)
+	else:
+		sys.stdout.write(text)
+
+
+if __name__ == "__main__":
+	main()

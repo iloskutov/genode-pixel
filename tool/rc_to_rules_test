@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+#
+# \brief  Tests of the tool 'rc_to_rules'
+# \author Ivan Loskutov
+# \date   2026-11-07
+#
+# SPDX-License-Identifier: MIT
+#
+# usage: tool/rc_to_rules_test [-v]
+#
+# With RC_DIR naming a directory with the phone's modem .rc files (e.g. the
+# 'vendor/etc/init' of the archive of 'tool/pull_modem_files'), the real
+# files are translated as well.
+#
+
+import importlib.machinery, importlib.util, os, sys, unittest
+
+sys.dont_write_bytecode = True
+import xml.etree.ElementTree as ET
+
+HERE   = os.path.dirname(os.path.abspath(__file__))
+loader = importlib.machinery.SourceFileLoader("rc_to_rules", os.path.join(HERE, "rc_to_rules"))
+spec   = importlib.util.spec_from_loader("rc_to_rules", loader)
+r      = importlib.util.module_from_spec(spec)
+loader.exec_module(r)
+
+INIT  = os.environ.get("RC_DIR", "")
+FILES = ["cbd.rc", "rild_exynos.rc", "rfsd.rc", "init.modem.rc", "init.shared_modem_platform_l.rc"]
+
+
+def parse_hid(text):
+	"""element tree of the HID the tool generates (one node per line)"""
+	lines = [l for l in text.split("\n") if l.strip() and l.strip() != "-"]
+	root  = ET.Element(lines[0].strip())
+	stack = [(-1, root)]
+	for line in lines[1:]:
+		stripped = line.lstrip(" ")
+		if not stripped.startswith("+ "):
+			continue
+		indent = len(line) - len(stripped)
+		parts  = stripped[2:].split(" | ")
+		head   = parts[0].split(" ", 1)
+		elem   = ET.Element(head[0])
+		if len(head) > 1:
+			elem.set("name", head[1])
+		for attr in parts[1:]:
+			tag, _, value = attr.partition(":")
+			elem.set(tag, value.strip())
+		while stack[-1][0] >= indent:
+			stack.pop()
+		stack[-1][1].append(elem)
+		stack.append((indent, elem))
+	return root
+
+
+def rules(text, name="t.rc"):
+	return parse_hid(r.translate([(name, text)]))
+
+
+class Translate(unittest.TestCase):
+
+	def test_service_with_options_and_args(self):
+		x = rules("service s /vendor/bin/s -a ${ro.x} \"two words\"\n"
+		          "    class main\n    disabled\n    oneshot\n    user radio\n")
+		s = x.find("service")
+		self.assertEqual((s.get("name"), s.get("path"), s.get("class")), ("s", "/vendor/bin/s", "main"))
+		self.assertEqual((s.get("disabled"), s.get("oneshot")), ("yes", "yes"))
+		self.assertEqual([a.get("value") for a in s.findall("arg")], ["-a", "${ro.x}", "two words"])
+
+	def test_default_class(self):
+		self.assertEqual(rules("service s /p\n").find("service").get("class"), "default")
+
+	def test_indented_section_keywords(self):
+		x = rules("on fs\n    setprop a 1\n    service s /p\n    class main\n")
+		self.assertEqual(x.find("service").get("class"), "main")
+		self.assertEqual(len(x.find("on").findall("setprop")), 1)
+
+	def test_triggers(self):
+		x = rules("on property:a=1\n    start s\n"
+		          "on property:b=*\n    stop s\n"
+		          "on boot && property:c=2 && property:d=3\n    restart s\n")
+		ons = x.findall("on")
+		self.assertEqual(ons[0].get("event"), None)
+		self.assertEqual([(p.get("name"), p.get("value")) for p in ons[0].findall("property")], [("a", "1")])
+		self.assertEqual(ons[1].find("property").get("value"), "*")
+		self.assertEqual(ons[2].get("event"), "boot")
+		self.assertEqual(len(ons[2].findall("property")), 2)
+		self.assertEqual(ons[2].find("restart").get("service"), "s")
+
+	def test_commands(self):
+		x = rules("on post-fs-data\n    mkdir /data/vendor/log 0771 radio system\n"
+		          "    mkdir /data/x\n    write /data/f \"\"\n    rm /data/g\n"
+		          "    class_start main\n    class_stop late\n    setprop p ${q}\n")
+		on = x.find("on")
+		self.assertEqual(on.findall("mkdir")[0].get("mode"), "0771")
+		self.assertIsNone(on.findall("mkdir")[1].get("mode"))
+		self.assertEqual((on.find("write").get("path"), on.find("write").get("value")), ("/data/f", ""))
+		self.assertEqual(on.find("rm").get("path"), "/data/g")
+		self.assertEqual(on.find("class_start").get("name"), "main")
+		self.assertEqual(on.find("class_stop").get("name"), "late")
+		self.assertEqual(on.find("setprop").get("value"), "${q}")
+
+	def test_unsupported_with_location(self):
+		x = rules("on fs\n    restorecon /data\n    write /sys/x 1\n    chown radio system /d\n", "a.rc")
+		u = x.findall("unsupported")
+		self.assertEqual([(e.get("file"), e.get("line")) for e in u], [("a.rc", "2"), ("a.rc", "3"), ("a.rc", "4")])
+		self.assertEqual(u[1].get("command"), "write /sys/x 1")
+
+	def test_comments_and_continuation(self):
+		x = rules("# c\non fs  # not a comment for init, but no such token\n"
+		          "    setprop a \\\n        b\n")
+		self.assertEqual(x.find("on").find("setprop").get("value"), "b")
+
+	def test_special_characters(self):
+		x = rules("on fs\n    setprop a \"<&>\"\n")
+		self.assertEqual(x.find("on").find("setprop").get("value"), "<&>")
+		with self.assertRaises(r.Rc_error):
+			r.translate([("b.rc", "on fs\n    setprop a \"x|y\"\n")])
+
+	def test_errors(self):
+		for bad in ["    setprop a 1\n", "on\n", "service s\n", "on boot && fs\n    start s\n"]:
+			with self.assertRaises(r.Rc_error):
+				r.translate([("b.rc", bad)])
+
+	def test_real_modem_files(self):
+		paths = [os.path.join(INIT, f) for f in FILES]
+		if not INIT or not all(os.path.exists(p) for p in paths):
+			self.skipTest("RC_DIR with the modem .rc files not given")
+		x = parse_hid(r.translate([(os.path.basename(p), open(p).read()) for p in paths]))
+		names = [s.get("name") for s in x.findall("service")]
+		for n in ("cpboot-daemon", "ril-daemon", "RFS-daemon"):
+			self.assertIn(n, names)
+		cbd = [s for s in x.findall("service") if s.get("name") == "cpboot-daemon"][0]
+		self.assertIn("${ro.vendor.cbd.modem_type}", [a.get("value") for a in cbd.findall("arg")])
+
+
+if __name__ == "__main__":
+	unittest.main()
