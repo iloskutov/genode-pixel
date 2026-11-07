@@ -21,7 +21,7 @@ include $(call select_from_repositories,lib/mk/wifi.inc)
 
 LIBS += pixel_lx_emul
 
-INC_DIR += $(TARGET_LIB_DIR) $(TARGET_LIB_DIR)/compat
+INC_DIR += $(TARGET_LIB_DIR)
 INC_DIR += $(LX_SRC_DIR)/scripts/dtc/libfdt
 
 SRC_CC += lx_emul/pin.cc

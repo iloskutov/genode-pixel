@@ -4,8 +4,9 @@
  * \date   2026-10-28
  *
  * The vendor's PCIe driver reports the training of the link (lock of the
- * PHY, link speed, power states) only to a log buffer of Google's kernel
- * modules, which is not part of the ports.
+ * PHY, link speed, power states), the modem interface driver the power
+ * sequence of the modem, only to a log buffer of Google's kernel modules,
+ * which is not part of the ports.
  */
 
 /*
