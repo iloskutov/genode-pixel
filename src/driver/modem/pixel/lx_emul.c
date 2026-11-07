@@ -276,6 +276,20 @@ unsigned long get_zeroed_page(gfp_t gfp_mask)
  ** Misc **
  **********/
 
+#include <linux/interrupt.h>
+
+/*
+ * irq_exit: the softirqs an interrupt raised run now. The cpif receives the
+ * CP's messages in its NET_RX softirq (NAPI), without it they would wait for
+ * whatever runs softirqs next, about a second per acknowledgement of the
+ * firmware stream.
+ */
+void do_softirq_own_stack(void)
+{
+	__do_softirq();
+}
+
+
 /* target.mk: the "user" pointers of the device nodes are kernel pointers */
 unsigned long lx_emul_modem_copy_to_user(void *to, const void *from,
                                          unsigned long n)

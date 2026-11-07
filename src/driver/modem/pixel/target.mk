@@ -22,10 +22,11 @@ SRC_C   += lx_emul/gs201/common_dummies.c
 
 #
 # The resource tree (PCI) and the network core (the cpif's network devices)
-# are built, the common dummies of their parts are renamed and unused
+# are built, the common dummies of their parts are renamed and unused, as is
+# the one that drops the softirqs raised in interrupt context (lx_emul.c)
 #
 COMMON_UNUSED := insert_resource release_resource iomem_resource \
-                 ioport_resource skb_init net_ns_init
+                 ioport_resource skb_init net_ns_init do_softirq_own_stack
 
 CC_OPT_lx_emul/gs201/common_dummies += \
 	$(foreach s,$(COMMON_UNUSED),-D$(s)=common_unused_$(s))
