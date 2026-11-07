@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+#
+# \brief  Create trace-and-stop dummies of a DDE Linux driver from kernel headers
+# \author Ivan Loskutov
+# \date   2026-11-07
+#
+# SPDX-License-Identifier: MIT
+#
+# Does what Genode's tool/dde_linux/create_dummies does without a built Linux
+# kernel: the prototype of an undefined function, or the declaration of an
+# undefined variable, is taken from the kernel's headers by ctags instead of
+# from the object files of a kernel build.
+#
+# The tool builds the target, collects its undefined references and writes
+# one dummy per reference, which calls lx_emul_trace_and_stop:
+#
+# ! tool/create_dummies_from_headers --build-dir build/arm_v8a \
+# !     --target driver/modem/pixel \
+# !     --linux contrib/pixel_linux-<hash>/src/linux \
+# !     --include contrib/google_soc_gs-<hash>/src/google_soc_gs/include \
+# !     --out repos/pixel/src/driver/modem/pixel/generated_dummies.c \
+# !     KERNEL=hw BOARD=google_pixel7
+#
+# The file is replaced. Symbols already defined by an earlier
+# generated_dummies.c of the target must be removed from it first, or the
+# build fails on them. A reference found in no header is reported, the
+# dummies of the others are written. Functions declared in a header outside
+# the include directories (drivers/pci/pci.h) get an extern declaration of
+# their own.
+#
+# Needs universal-ctags.
+#
+
+import argparse
+import datetime
+import os
+import re
+import subprocess
+import sys
+
+
+def undefined_references(build_dir, target, make_args):
+	env = dict(os.environ)
+	env.pop('TARGET', None)
+	r = subprocess.run(['make', '-C', build_dir, target] + make_args, env=env,
+	                   capture_output=True, text=True)
+	refs = set()
+	for line in (r.stdout + r.stderr).splitlines():
+		m = re.search(r"undefined reference to [`'](.+?)'", line)
+		if m:
+			refs.add(m.group(1))
+		m = re.search(r"more undefined references to [`'](.+?)' follow", line)
+		if m:
+			refs.add(m.group(1))
+	return sorted(refs)
+
+
+def ctags(root, kinds, sub):
+	r = subprocess.run(['ctags', '-R', '-x', '--languages=C', '--langmap=C:.h',
+	                    '--kinds-c=' + kinds, '--fields=+S',
+	                    '--_xformat=%N\t%F\t%t\t%S\t%P', sub],
+	                   cwd=root, capture_output=True, text=True)
+	d = {}
+	for line in r.stdout.splitlines():
+		f = line.split('\t')
+		if len(f) >= 5:
+			d.setdefault(f[0], []).append(f)
+	return d
+
+
+def type_of(t):
+	t = t.replace('typename:', '')
+	for k in ('struct', 'union', 'enum'):
+		t = t.replace(k + ':', k + ' ')
+	return t.strip()
+
+
+def strip_dot(path):
+	return path[2:] if path.startswith('./') else path
+
+
+def main():
+	ap = argparse.ArgumentParser()
+	ap.add_argument('--build-dir', required=True)
+	ap.add_argument('--target', required=True)
+	ap.add_argument('--linux', required=True, help='kernel source directory')
+	ap.add_argument('--include', action='append', default=[],
+	                help='further include directory, e.g. of a vendor port')
+	ap.add_argument('--out', required=True)
+	ap.add_argument('make_args', nargs='*', help='arguments of make, e.g. KERNEL=hw -j8')
+	a, more = ap.parse_known_args()
+	a.make_args += more
+
+	names = undefined_references(a.build_dir, a.target, a.make_args)
+	if not names:
+		print('no undefined references')
+		return
+
+	lx = a.linux
+	roots  = [(os.path.join(lx, 'include'), '.', True)]
+	roots += [(lx, d, False) for d in ('drivers', 'net', 'kernel', 'lib', 'mm')]
+	roots += [(r, '.', True) for r in a.include]
+
+	protos = [(inc, ctags(root, 'p', sub)) for root, sub, inc in roots]
+	vars_  = [(inc, ctags(root, 'x', sub)) for root, sub, inc in roots]
+
+	def find(db, n):
+		for inc, d in db:
+			if n in d:
+				return inc, d[n][0]
+		return None
+
+	dummies, missing = [], []
+	for n in names:
+		p = find(protos, n)
+		if p:
+			inc, f = p
+			decl = '%s %s%s' % (type_of(f[2]), n, f[3])
+			dummies.append(('f', n, strip_dot(f[1]) if inc else None, decl))
+			continue
+
+		v = find(vars_, n)
+		if v:
+			inc, f = v
+			line = f[4].strip().lstrip('/^').rstrip('$/').strip()
+			line = line.replace('extern ', '').replace('\\/', '/')
+			line = line.replace('__read_mostly', '').strip().rstrip(';').strip()
+			dummies.append(('v', n, strip_dot(f[1]) if inc else None, line))
+			continue
+
+		# declarations ctags does not see: static keys, externs with attributes
+		r = subprocess.run(['grep', '-rn', '--include=*.h', '-E',
+		                    r'(DECLARE_STATIC_KEY_(FALSE|TRUE)\(%s\)|^extern .*\b%s\b.*;)' % (re.escape(n), re.escape(n)),
+		                    '.'], cwd=os.path.join(lx, 'include'),
+		                   capture_output=True, text=True)
+		hits = r.stdout.splitlines()
+		if hits:
+			hdr, _, line = hits[0].split(':', 2)
+			m = re.search(r'DECLARE_STATIC_KEY_(FALSE|TRUE)', line)
+			if m:
+				dummies.append(('k', n, strip_dot(hdr),
+				                'DEFINE_STATIC_KEY_%s(%s)' % (m.group(1), n)))
+			else:
+				line = line.replace('extern ', '').replace('__read_mostly', '')
+				dummies.append(('v', n, strip_dot(hdr), line.strip().rstrip(';').strip()))
+			continue
+
+		missing.append(n)
+
+	with open(a.out, 'w') as o:
+		o.write('/*\n'
+		        ' * \\brief  Dummy definitions of Linux Kernel functions\n'
+		        ' * \\author Automatically generated file - do no edit\n'
+		        ' * \\date   %s\n'
+		        ' */\n\n#include <lx_emul.h>\n\n' % datetime.date.today())
+
+		for kind, n, hdr, decl in sorted(dummies, key=lambda x: x[1].lstrip('_')):
+			o.write('\n')
+			if hdr:
+				o.write('#include <%s>\n\n' % hdr)
+			if kind == 'k':
+				o.write('%s;\n\n' % decl)
+			elif kind == 'v':
+				o.write('%s = {};\n\n' % decl)
+			else:
+				if not hdr:
+					o.write('extern %s;\n' % decl)
+				o.write('%s\n{\n\tlx_emul_trace_and_stop(__func__);\n}\n\n' % decl)
+
+	print('%d dummies written to %s' % (len(dummies), a.out))
+	if missing:
+		print('not found in any header: ' + ' '.join(missing), file=sys.stderr)
+		sys.exit(1)
+
+
+if __name__ == '__main__':
+	main()
