@@ -132,9 +132,17 @@ static void gs201_eint_unmask(struct irq_data *d)
 {
 	struct gs201_bank *bank = irq_data_get_irq_chip_data(d);
 	unsigned const gic = bank->gic_irq[d->hwirq];
-	char name[16];
+	char pin[16], name[24];
 
-	gs201_pin_name(&bank->chip, d->hwirq, name, sizeof(name));
+	gs201_pin_name(&bank->chip, d->hwirq, pin, sizeof(pin));
+
+	/*
+	 * The name only identifies the interrupt within lx_emul/pin.cc, which
+	 * refuses to sense a pin of that name once it has an interrupt. A
+	 * driver that reads the level of its interrupt pin (the modem's cpif)
+	 * senses it as "<bank>-<index>", a Pin_state session of its own.
+	 */
+	snprintf(name, sizeof(name), "%s/irq", pin);
 
 	/*
 	 * lx_emul_pin_irq_unmask expects the GIC interrupt as SPI number and
