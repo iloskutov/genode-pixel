@@ -50,3 +50,8 @@ The scenario 'run/modem_cbd_pixel' boots the modem with the phone's own CP
 boot daemon cbd, run by 'android_loader' of the repository 'goa-packages',
 up to the online state of the CP. The files of the phone it needs are
 pulled by 'tool/pull_modem_files'.
+
+The scenario 'run/modem_stack_pixel' runs the phone's whole modem stack,
+cbd, rild, rfsd, and shared_modem_platform under 'modem_orchestrator', with
+'rild_modem' and 'modem_console' of 'goa-packages': the modem answers calls
+and logs received SMS.
