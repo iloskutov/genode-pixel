@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+#
+# \brief  Pull the files of the modem's daemons from a Pixel 7 running Android
+# \author Ivan Loskutov
+# \date   2026-11-07
+#
+# SPDX-License-Identifier: MIT
+#
+# The modem stack runs the phone's own daemons: cbd boots the CP, rild and
+# rfsd talk to it, shared_modem_platform configures it. Neither they nor
+# the data of the phone they need are part of Genode. This tool copies them
+# via adb into two tar archives:
+#
+# :contrib/pixel_modem_vendor.tar:
+#   the daemons as their init files name them, the libraries they need
+#   (recursively, by their ELF dependencies), the RIL library rild loads
+#   by the property 'vendor.rild.libpath', and the init files of the modem,
+#   at their paths on the phone ('vendor/bin/cbd', 'system/lib64/...')
+#
+# :contrib/pixel_modem_device.tar:
+#   the data of this phone: the NV files of the modem ('efs/'), the CP
+#   signature ('persist/cpsha'), the replay region of the modem
+#   ('modem_userdata/replay/dds.bin'), the IMEIs and the RF ID of the
+#   device tree ('devicetree/'), the kernel command line ('cmdline'), the
+#   version directory of modem.bin on modem_a ('VERSION'), and the
+#   properties of the phone ('getprop.txt', with its serial numbers)
+#
+# usage: pull_modem_files [--vendor <archive>] [--device <archive>]
+#
+# The device archive belongs to one phone: keep it to yourself, it holds
+# the IMEIs and the serial numbers; it is created readable by its owner
+# only. The files are readable for root only. The phone must run an
+# Android build that permits 'adb root' (userdebug, e.g., LineageOS) with
+# USB debugging enabled, and 'adb root' must be executed before this tool.
+#
+# The ELF dependencies are read on the host with 'readelf' (READELF, by
+# default the one of the Genode tool chain if present).
+#
+
+import argparse
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+# init files of the modem's daemons on the phone
+INIT_FILES = [
+	'/vendor/etc/init/cbd.rc',
+	'/vendor/etc/init/rild_exynos.rc',
+	'/vendor/etc/init/rfsd.rc',
+	'/vendor/etc/init/init.modem.rc',
+	'/vendor/etc/init/init.shared_modem_platform_l.rc',
+]
+
+# where the dynamic linker of the phone looks for the libraries
+LIB_DIRS = [ '/vendor/lib64', '/vendor/lib64/hw', '/system/lib64',
+             '/system_ext/lib64', '/odm/lib64' ]
+
+# properties naming libraries that are loaded at run time
+LIB_PROPERTIES = [ 'vendor.rild.libpath', 'rild.libpath' ]
+
+# device data: (path on the phone, name in the archive)
+DEVICE_FILES = [
+	('/mnt/vendor/efs/nv_normal.bin',     'efs/nv_normal.bin'),
+	('/mnt/vendor/efs/nv_protected.bin',  'efs/nv_protected.bin'),
+	('/mnt/vendor/persist/modem/cpsha',   'persist/cpsha'),
+	('/mnt/vendor/modem_userdata/replay/dds.bin',
+	                                      'modem_userdata/replay/dds.bin'),
+	('/sys/firmware/devicetree/base/chosen/plat/rfid',    'devicetree/rfid'),
+	('/sys/firmware/devicetree/base/chosen/config/imei1', 'devicetree/imei1'),
+	('/sys/firmware/devicetree/base/chosen/config/imei2', 'devicetree/imei2'),
+	('/proc/cmdline',                     'cmdline'),
+]
+
+MODEM_IMAGES = '/mnt/vendor/modem_img/images/default'
+
+
+def fail(msg):
+	print('Error: ' + msg, file=sys.stderr)
+	sys.exit(1)
+
+
+def adb(*args, check=True):
+	r = subprocess.run(['adb'] + list(args), capture_output=True)
+	if check and r.returncode:
+		fail('adb ' + ' '.join(args) + ': ' + r.stderr.decode(errors='replace').strip())
+	return r
+
+
+def shell(cmd):
+	return adb('shell', cmd, check=False).stdout.decode(errors='replace')
+
+
+def pull(src, dst):
+	os.makedirs(os.path.dirname(dst), exist_ok=True)
+	return adb('pull', src, dst, check=False).returncode == 0
+
+
+def plain_path(path):
+	"""an absolute path without '.' or '..' elements: the paths named by the
+	phone's files and properties land below the archive root as they are"""
+	return path.startswith('/') and os.path.normpath(path) == path
+
+
+def readelf():
+	tool = os.environ.get('READELF')
+	if tool:
+		return tool
+	genode = '/usr/local/genode/tool/current/bin/genode-aarch64-readelf'
+	return genode if os.path.exists(genode) else 'readelf'
+
+
+def needed(path):
+	r = subprocess.run([readelf(), '-d', path], capture_output=True, text=True)
+	libs = []
+	for line in r.stdout.splitlines():
+		if '(NEEDED)' in line and '[' in line:
+			libs.append(line.split('[', 1)[1].split(']', 1)[0])
+	return libs
+
+
+def daemons(init_dir):
+	"""executables of the 'service' lines of the pulled init files"""
+	result = []
+	for name in sorted(os.listdir(init_dir)):
+		for line in open(os.path.join(init_dir, name), errors='replace'):
+			words = line.split()
+			if len(words) >= 3 and words[0] == 'service' and plain_path(words[2]):
+				result.append(words[2])
+	return sorted(set(result))
+
+
+def pull_vendor(root):
+	print('init files')
+	init_dir = os.path.join(root, 'vendor/etc/init')
+	for path in INIT_FILES:
+		if not pull(path, root + path):
+			fail('could not pull ' + path + ', execute \'adb root\' first')
+
+	todo = daemons(init_dir)
+	if not todo:
+		fail('no service in the init files')
+
+	for prop in LIB_PROPERTIES:
+		value = shell('getprop ' + prop).strip()
+		if plain_path(value):
+			todo.append(value)
+
+	done, missing = set(), set()
+	while todo:
+		path = todo.pop()
+		if path in done:
+			continue
+		done.add(path)
+
+		print('  ' + path)
+		if not pull(path, root + path):
+			missing.add(path)
+			continue
+
+		for lib in needed(root + path):
+			if '/' in lib or lib in ('.', '..'):
+				missing.add(lib)   # a NEEDED entry is a file name
+				continue
+			found = None
+			for d in LIB_DIRS:
+				candidate = d + '/' + lib
+				if candidate in done or shell('ls ' + shlex.quote(candidate)).strip() == candidate:
+					found = candidate
+					break
+			if found:
+				todo.append(found)
+			else:
+				missing.add(lib)
+
+	return missing
+
+
+def pull_device(root):
+	print('device data')
+	for src, dst in DEVICE_FILES:
+		print('  ' + src)
+		if not pull(src, os.path.join(root, dst)):
+			fail('could not pull ' + src + ', execute \'adb root\' first')
+
+	version = os.path.basename(shell('readlink ' + MODEM_IMAGES).strip())
+	if not version:
+		fail('cannot read the link ' + MODEM_IMAGES)
+	with open(os.path.join(root, 'VERSION'), 'w') as f:
+		f.write(version + '\n')
+
+	# the properties name the phone (serial numbers): device data
+	with open(os.path.join(root, 'getprop.txt'), 'w') as f:
+		f.write(shell('getprop'))
+
+
+def pack(src, archive, private):
+	"""the archive appears complete or not at all; a private one is readable
+	by its owner only"""
+	os.makedirs(os.path.dirname(archive), exist_ok=True)
+	tmp = archive + '.tmp'
+	with tarfile.open(tmp, 'w') as tar:
+		def reset(info):
+			info.uid = info.gid = 0
+			info.uname = info.gname = ''
+			return info
+		for name in sorted(os.listdir(src)):
+			tar.add(os.path.join(src, name), arcname=name, filter=reset)
+	if private:
+		os.chmod(tmp, 0o600)
+	os.replace(tmp, archive)
+	print('created ' + archive)
+
+
+def main():
+	genode = os.path.realpath(os.path.join(os.path.dirname(__file__), '../../..'))
+	ap = argparse.ArgumentParser()
+	ap.add_argument('--vendor', default=os.path.join(genode, 'contrib/pixel_modem_vendor.tar'))
+	ap.add_argument('--device', default=os.path.join(genode, 'contrib/pixel_modem_device.tar'))
+	a = ap.parse_args()
+
+	if not shutil.which('adb'):
+		fail('\'adb\' is not installed')
+
+	adb('wait-for-device')
+
+	with tempfile.TemporaryDirectory() as tmp:
+		vendor = os.path.join(tmp, 'vendor_root')
+		device = os.path.join(tmp, 'device')
+
+		missing = pull_vendor(vendor)
+		pull_device(device)
+
+		pack(vendor, a.vendor, private=False)
+		pack(device, a.device, private=True)
+
+	if missing:
+		print('not found on the phone: ' + ' '.join(sorted(missing)), file=sys.stderr)
+
+
+if __name__ == '__main__':
+	main()
