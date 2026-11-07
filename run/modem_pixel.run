@@ -1,0 +1,118 @@
+#
+# Modem driver for the Google Pixel 7: boot loader of the CP over PCIe
+#
+# 'test-modem_boot' takes the first steps of the vendor's CP boot daemon
+# through the device node "umts_boot0" of 'pixel_modem': it powers the modem
+# on, loads the section BOOT of modem.bin and starts the CP's boot loader,
+# which the CP's boot ROM fetches over the PCIe link. The driver waits for
+# the boot stage 0x3fff, for the boot loader's signal, and brings the link
+# up again. The test ends with "modem_boot: PASS" or "modem_boot: FAIL", the
+# driver logs "boot_stage == 0x3FFF" on the way. The firmware itself is not
+# sent, the CP stays in its boot loader.
+#
+# modem.bin is read from the phone's firmware partition modem_a (ext4,
+# partition 19 of the UFS unit 'sda'), nothing is written to the storage.
+#
+#   make run/modem_pixel KERNEL=hw BOARD=google_pixel7
+#
+# Needs the repository 'muesli' for the ext4 VFS plug-in and the ports
+# 'pixel_linux', 'google_soc_gs', 'google_s5300' and 'lwext4'.
+#
+
+assert {[have_board google_pixel7]}
+
+source [genode_dir]/repos/pixel/run/modem_pixel.inc
+
+build {
+	core init lib/ld timer
+	server/report_rom
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/ufs/exynos
+	server/part_block
+	server/vfs
+	lib/vfs lib/vfs_ext4
+	driver/modem/pixel
+	test/modem_boot
+}
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start report_rom | ram: 2M
+  + provides
+    + service Report
+    + service ROM
+  + config | verbose: yes
+  + route | + any-service | + parent
+
+} [modem_pixel_drivers] {
++ start part_block | ram: 10M
+  + provides | + service Block
+  + config
+    + report | partitions: yes
+    + policy | label_prefix: vfs | partition: 19 | writeable: no
+      . modem_a
+  + route
+    + service Block  | + child exynos_ufs
+    + service Report | + child report_rom
+    + any-service    | + parent
+
++ start vfs | caps: 200 | ram: 32M
+  + provides | + service File_system
+  + config
+    + vfs | + ext4
+    + default-policy | root: / | writeable: no
+  + route
+    + service Block | + child part_block
+    + any-service   | + parent
+
++ start pixel_modem | caps: 1000 | ram: 128M | managing_system: yes
+  . managing_system: the power-management unit and the address
+  . translation of the PCIe controller are programmed through the secure
+  . monitor
+  + provides | + service Android_chardev
+  + config
+    + policy | label_prefix: test-modem_boot | + node | name: umts_boot0
+  + route
+    + service ROM | label: dtb | + parent | label: pixel_modem-google_pixel7.dtb
+    + service Platform    | + child platform
+    + service Dma         | + child platform
+    + service Pin_state   | + child gs201_pio
+    + service Pin_control | + child gs201_pio
+    + service IRQ         | + child gs201_pio
+    + service Timer       | + child timer
+    + any-service         | + parent
+
++ start test-modem_boot | caps: 200 | ram: 8M
+  + config
+    + vfs | + fs | buffer_size: 1M
+  + route
+    + service File_system     | + child vfs
+    + service Android_chardev | + child pixel_modem
+    + any-service             | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
