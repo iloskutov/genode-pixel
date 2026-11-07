@@ -14,7 +14,8 @@
 # :contrib/pixel_modem_vendor.tar:
 #   the daemons as their init files name them, the libraries they need
 #   (recursively, by their ELF dependencies), the RIL library rild loads
-#   by the property 'vendor.rild.libpath', and the init files of the modem,
+#   by the property 'vendor.rild.libpath' and the libraries it loads at run
+#   time, the init files of the modem, and the daemons' configuration data,
 #   at their paths on the phone ('vendor/bin/cbd', 'system/lib64/...')
 #
 # :contrib/pixel_modem_device.tar:
@@ -65,6 +66,30 @@ SYSTEM_DIRS = [ '/system/lib64', '/system_ext/lib64',
 
 # properties naming libraries that are loaded at run time
 LIB_PROPERTIES = [ 'vendor.rild.libpath', 'rild.libpath' ]
+
+# libraries rild and its RIL library load at run time (dlopen), with the
+# libraries they need: no ELF dependency names them
+RUNTIME_LIBS = [
+	'/vendor/lib64/libsitril.so',
+	'/vendor/lib64/libgooglerilaudio.so',
+	'/vendor/lib64/libnetutils.so',
+	'/vendor/lib64/libsqlite.so',
+	'/vendor/lib64/libxml2.so',
+	'/vendor/lib64/vendor.google.whitechapel.audio.audioext@4.0.so',
+	'/vendor/lib64/vendor.google.whitechapel.audio.extension-V7-ndk.so',
+	'/vendor/lib64/vendor.radio.base.so',
+	'/vendor/lib64/vendor.radio.protocol.sit.base.so',
+	'/vendor/lib64/vendor.radio.protocol.sit.json.so',
+	'/vendor/lib64/vendor.radio.protocol.sit.stream.so',
+]
+
+# data of the daemons: the modem statistics config, and the carrier and UE
+# capability configurations shared_modem_platform sends to the CP
+VENDOR_DATA = [
+	'/vendor/etc/modem_stat.conf',
+	'/vendor/firmware/carrierconfig',
+	'/vendor/firmware/uecapconfig',
+]
 
 # device data: (path on the phone, name in the archive)
 DEVICE_FILES = [
@@ -152,6 +177,15 @@ def pull_vendor(root):
 		value = shell('getprop ' + prop).strip()
 		if plain_path(value):
 			todo.append(value)
+
+	todo += RUNTIME_LIBS
+
+	print('data')
+	for path in VENDOR_DATA:
+		print('  ' + path)
+		os.makedirs(os.path.dirname(root + path), exist_ok=True)
+		if adb('pull', path, os.path.dirname(root + path), check=False).returncode:
+			fail('could not pull ' + path)
 
 	done, missing = set(), set()
 	while todo:
