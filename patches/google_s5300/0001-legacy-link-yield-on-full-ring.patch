@@ -1,0 +1,18 @@
+link_device_memory_legacy: yield instead of sleeping on a full ring
+
+When the CP's ring of the boot channel is full while cbd streams the
+firmware images, xmit_to_legacy_link() sleeps 50 ms per try. In the DDE
+driver, that sleep did not return while the stream ran. The task yields
+to the other tasks instead, as tested on the phone.
+
+--- a/src/google_s5300/link_device_memory_legacy.c
++++ b/src/google_s5300/link_device_memory_legacy.c
+@@ -304,7 +304,7 @@
+ 			if (in_interrupt())
+ 				mdelay(50);
+ 			else
+-				msleep(50);
++				cond_resched();
+ 			continue;
+ 		}
+ 
