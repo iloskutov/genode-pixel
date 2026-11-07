@@ -1,0 +1,219 @@
+#
+# The phone's CP boot daemon cbd boots the modem on the Google Pixel 7
+#
+# The unmodified cbd of the phone's Android runs under 'android_loader' of
+# the Goa project of that name and boots the CP through the device nodes of
+# 'pixel_modem': power-on, boot loader, firmware (modem.bin of the firmware
+# partition modem_a with the phone's NV data), until the CP is online. The
+# log shows "pixel_modem: ... umts_boot0: ioctl 0x6f23 -> 0" (the CP
+# completed its boot) and cbd's own lines.
+#
+# The files of the phone are not part of Genode. 'tool/pull_modem_files'
+# copies them from the phone running Android into
+# 'contrib/pixel_modem_vendor.tar' (cbd and its libraries) and
+# 'contrib/pixel_modem_device.tar' (NV data, CP signature, IMEIs).
+#
+# 'android_loader', 'android_prop' and 'android_binder' come from the depot of
+# this tree at the versions below (README of 'goa-packages'):
+#
+#   goa export -C android-launcher/android_prop
+#   goa export -C android-launcher/android_binder
+#   goa export -C android-launcher/android_loader
+#
+#   make run/modem_cbd_pixel KERNEL=hw BOARD=google_pixel7
+#
+
+assert {[have_board google_pixel7]}
+
+source [genode_dir]/repos/pixel/run/modem_pixel.inc
+
+set vendor_tar  [genode_dir]/contrib/pixel_modem_vendor.tar
+set device_tar  [genode_dir]/contrib/pixel_modem_device.tar
+
+foreach f [list $vendor_tar $device_tar] {
+	if {![file isfile $f]} {
+		puts stderr "Error: $f missing, see the header of this script"
+		exit 1
+	}
+}
+
+build {
+	core init lib/ld timer
+	server/report_rom
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/ufs/exynos
+	server/part_block
+	server/vfs
+	lib/vfs lib/vfs_ext4 lib/vfs_import
+	lib/libc lib/libm lib/posix lib/stdcxx
+	driver/modem/pixel
+}
+
+create_boot_directory
+
+import_from_depot iloskutov_pixel7/src/android_loader/2026-11-07 \
+                  iloskutov_pixel7/src/android_prop/2026-11-07 \
+                  iloskutov_pixel7/src/android_binder/2026-11-07
+
+#
+# Files of the phone: the device data as ROM modules, cbd and its libraries
+# as tar archive 'android.tar'
+#
+set g [run_dir]/genode
+
+exec rm -rf [run_dir]/device [run_dir]/android_root
+exec mkdir -p [run_dir]/device [run_dir]/android_root
+exec tar xf $device_tar -C [run_dir]/device
+exec tar xf $vendor_tar -C [run_dir]/android_root
+
+foreach f { efs/nv_normal.bin efs/nv_protected.bin persist/cpsha
+            modem_userdata/replay/dds.bin devicetree/rfid devicetree/imei1
+            devicetree/imei2 cmdline } {
+	exec cp [run_dir]/device/$f $g/[file tail $f] }
+
+set fw_version [string trim [exec cat [run_dir]/device/VERSION]]
+
+exec cp [getprop_file] $g/getprop.txt
+exec tar cf $g/android.tar -C [run_dir]/android_root .
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start report_rom | ram: 2M
+  + provides
+    + service Report
+    + service ROM
+  + config | verbose: yes
+  + route | + any-service | + parent
+
+} [modem_pixel_drivers] {
++ start part_block | ram: 10M
+  + provides | + service Block
+  + config
+    + report | partitions: yes
+    + policy | label_prefix: vfs | partition: 19 | writeable: no
+      . modem_a
+  + route
+    + service Block  | + child exynos_ufs
+    + service Report | + child report_rom
+    + any-service    | + parent
+
++ start vfs | caps: 200 | ram: 32M
+  . the version directory of modem_a that 'images/default' links to, mounted
+  . at that path in cbd's VFS
+  + provides | + service File_system
+  + config
+    + vfs | + ext4
+    + policy | label_prefix: cbd | root: /images/} $fw_version {/ | writeable: no
+  + route
+    + service Block | + child part_block
+    + any-service   | + parent
+
++ start pixel_modem | caps: 1000 | ram: 128M | managing_system: yes
+  + provides | + service Android_chardev
+  + config
+    + policy | label_prefix: cbd | + node | prefix: umts_boot
+  + route
+    + service ROM | label: dtb | + parent | label: pixel_modem-google_pixel7.dtb
+    + service Platform    | + child platform
+    + service Dma         | + child platform
+    + service Pin_state   | + child gs201_pio
+    + service Pin_control | + child gs201_pio
+    + service IRQ         | + child gs201_pio
+    + service Timer       | + child timer
+    + any-service         | + parent
+
++ start android_prop | caps: 200 | ram: 8M
+  + provides | + service Android_property
+  + config | permissive: no
+    + defaults | file: /etc/getprop.txt
+    + persist  | file: /data/property/persistent
+    + policy | label_prefix: cbd
+      + allow | prefix: vendor.cbd.
+      + allow | prefix: vendor.modem.
+    + vfs
+      + dir etc  | + rom getprop.txt
+      + dir data | + ram
+      + dir dev  | + log
+    + libc | stdout: /dev/log | stderr: /dev/log
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start cbd | caps: 600 | ram: 400M
+  + binary android_loader
+  + config | program: /vendor/bin/cbd
+    + arg | value: /vendor/bin/cbd
+    + arg | value: -d
+    + arg | value: -t
+    + arg | value: s5100sit
+    + arg | value: -P
+    + arg | value: by-name/modem_a
+    + arg | value: -s
+    + arg | value: 2
+    + env | value: ANDROID_ROOT=/system
+    + property_service
+    + chardev | prefix: /dev/umts_
+    + profile | lib: android_profile_cbd.lib.so
+    + vfs
+      + tar android.tar
+      + dir etc | + rom getprop.txt
+      + dir mnt
+        + dir vendor
+          + dir modem_img
+            + dir images
+              + dir default | + fs | label: modem_fw -> / | writeable: no
+          + dir efs
+            + rom nv_normal.bin
+            + rom nv_protected.bin
+          + dir persist | + dir modem | + rom cpsha
+          + dir modem_userdata | + ram
+      + dir sys
+        + dir firmware
+          + dir devicetree
+            + dir base
+              + dir chosen
+                + dir plat   | + rom rfid
+                + dir config
+                  + rom imei1
+                  + rom imei2
+      + dir proc | + rom cmdline
+      + dir data | + ram
+      + dir dev  | + log
+      + import
+        + dir data | + dir vendor | + inline .keep | : keep
+        + dir mnt
+          + dir vendor
+            + dir modem_userdata
+              + dir replay | + rom dds.bin
+    + libc | stdout: /dev/log | stderr: /dev/log | cwd: /
+  + route
+    + service File_system      | + child vfs
+    + service Android_chardev  | + child pixel_modem
+    + service Android_property | + child android_prop
+    + service Timer            | + child timer
+    + any-service              | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever

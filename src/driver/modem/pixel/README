@@ -45,3 +45,8 @@ starts it through "umts_boot0" ("modem_boot: PASS"). It needs the
 repository 'muesli' for the ext4 VFS plug-in and the port 'lwext4':
 
 ! make run/modem_pixel KERNEL=hw BOARD=google_pixel7
+
+The scenario 'run/modem_cbd_pixel' boots the modem with the phone's own CP
+boot daemon cbd, run by 'android_loader' of the repository 'goa-packages',
+up to the online state of the CP. The files of the phone it needs are
+pulled by 'tool/pull_modem_files'.
