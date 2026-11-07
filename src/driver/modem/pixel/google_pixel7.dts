@@ -1,0 +1,507 @@
+/dts-v1/;
+
+/*
+ * \brief  Device tree of the modem of the Google Pixel 7
+ * \author Ivan Loskutov
+ * \date   2026-11-07
+ *
+ * The tree describes what the modem driver needs: the modem interface
+ * (cpif) with its device nodes, the memory shared with the CP, PCIe
+ * channel 0 with its SysMMU, the GPIO banks of the modem's lines, the
+ * power-management unit, and the interrupt controller. The values are
+ * those of the vendor's device tree for the phone (gs201-panther).
+ *
+ * Left out are references that have no counterpart in the driver's Linux
+ * emulation environment: the supplies of the PHY (on, set up by the boot
+ * loader), pin-control states (the pins are configured by the pin driver),
+ * and the throughput monitor of the cpif (not built). The number of lanes
+ * of the link is not given: the cpif asks for the width of each link
+ * (lx_emul.c), a value of the tree would override it at every power-on.
+ * The power-management unit is only referenced for its address, the
+ * driver reaches its registers through the secure monitor.
+ */
+
+/*
+ * SPDX-License-Identifier: GPL-2.0
+ */
+
+/ {
+	model = "GS201 PANTHER MP based on GS201";
+	#address-cells = <2>;
+	#size-cells = <1>;
+	compatible = "google,GS201 PANTHER", "google,GS201";
+	interrupt-parent = <&gic>;
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+
+		cp_rmem: cp_rmem {
+			compatible = "exynos,modem_if";
+			reg = <0 0xea400000 0x800000>;
+			rmem_index = <0>;
+		};
+
+		cp_msi_rmem: cp_msi_rmem {
+			compatible = "exynos,modem_if";
+			reg = <0 0xf6200000 0x1000>;
+			rmem_index = <1>;
+		};
+
+		cp_rmem_1: cp_rmem_1 {
+			compatible = "exynos,modem_if";
+			reg = <0 0xe8000000 0x2000000>;
+			rmem_index = <2>;
+		};
+
+		cp_aoc_rmem: cp_aoc_rmem {
+			compatible = "exynos,modem_if";
+			reg = <0 0x197fd000 0x3000>;
+			rmem_index = <3>;
+		};
+	};
+
+	cp_shmem {
+		use_mem_map_on_cp = <0x00>;
+		cp_num = <0x00>;
+		memory-region = <&cp_rmem &cp_msi_rmem &cp_rmem_1 &cp_aoc_rmem>;
+		compatible = "samsung,exynos-cp-shmem";
+
+		regions {
+
+			vss_aoc {
+				region,cached = <0x00>;
+				region,size = <0x3000>;
+				region,offset = <0x00>;
+				region,rmem = <0x03>;
+				region,index = <0x01>;
+				region,name = "VSS_AOC";
+			};
+
+			pktproc_ul {
+				region,size = <0x400000>;
+				region,offset = <0x1c00000>;
+				region,rmem = <0x02>;
+				region,index = <0x08>;
+				region,name = "PKTPROC_UL";
+			};
+
+			pktproc {
+				region,size = <0x1c00000>;
+				region,offset = <0x00>;
+				region,rmem = <0x02>;
+				region,index = <0x07>;
+				region,name = "PKTPROC";
+			};
+
+			msi {
+				region,cached = <0x00>;
+				region,size = <0x1000>;
+				region,offset = <0x00>;
+				region,rmem = <0x01>;
+				region,index = <0x0b>;
+				region,name = "MSI";
+			};
+
+			ipc {
+				region,cached = <0x01>;
+				region,size = <0x800000>;
+				region,offset = <0x00>;
+				region,rmem = <0x00>;
+				region,index = <0x03>;
+				region,name = "IPC";
+			};
+		};
+	};
+
+	cpif {
+		mif,cp2ap_active_not_alive = <0x00>;
+		gpio_cp2ap_wake_up = <&gpa8 0x03 0x01>;
+		gpio_cp2ap_cp_ps_hold = <&gpa8 0x02 0x01>;
+		gpio_cp2ap_phone_active = <&gpa8 0x04 0x01>;
+		gpio_ap2cp_pm_wrst_n = <&gpa0 0x03 0x01>;
+		gpio_cp2ap_cp_wrst_n = <&gpa0 0x02 0x01>;
+		gpio_ap2cp_cp_wrst_n = <&gph1 0x06 0x01>;
+		gpio_ap2cp_nreset_n = <&gph1 0x03 0x01>;
+		gpio_ap2cp_pda_active = <&gph1 0x01 0x01>;
+		gpio_ap2cp_cp_pwr_on = <&gph1 0x02 0x01>;
+		gpio_ap2cp_dump_noti = <&gph0 0x03 0x01>;
+		gpio_ap2cp_wake_up = <&gph0 0x02 0x01>;
+		pktproc_ul_use_hw_iocc = <0x01>;
+		pktproc_ul_buff_rgn_cached = <0x01>;
+		pktproc_ul_desc_rgn_cached = <0x01>;
+		pktproc_ul_info_rgn_cached = <0x01>;
+		pktproc_ul_hiprio_ack_only = <0x01>;
+		pktproc_ul_max_packet_size = <0x800>;
+		pktproc_ul_num_queue = <0x02>;
+		pktproc_ul_padding_required = <0x01>;
+		pktproc_ul_buff_rgn_size = <0x370000>;
+		pktproc_ul_buff_rgn_offset = <0x1c90000>;
+		pktproc_ul_desc_rgn_size = <0x8f000>;
+		pktproc_ul_desc_rgn_offset = <0x1c01000>;
+		pktproc_ul_info_rgn_size = <0x1000>;
+		pktproc_ul_info_rgn_offset = <0x1c00000>;
+		pktproc_ul_support = <0x01>;
+		pktproc_dl_use_dedicated_baaw = <0x00>;
+		pktproc_dl_max_packet_size = <0x630>;
+		pktproc_dl_use_hw_iocc = <0x01>;
+		pktproc_dl_use_exclusive_irq = <0x01>;
+		pktproc_dl_num_queue = <0x04>;
+		pktproc_dl_desc_mode = <0x01>;
+		pktproc_dl_buff_rgn_cached = <0x01>;
+		pktproc_dl_desc_rgn_cached = <0x01>;
+		pktproc_dl_info_rgn_cached = <0x01>;
+		pktproc_dl_buff_rgn_size = <0x1b00000>;
+		pktproc_dl_buff_rgn_offset = <0x100000>;
+		pktproc_dl_desc_rgn_size = <0xff000>;
+		pktproc_dl_desc_rgn_offset = <0x1000>;
+		pktproc_dl_info_rgn_size = <0x1000>;
+		pktproc_dl_info_rgn_offset = <0x00>;
+		pktproc_dl_version = <0x02>;
+		pktproc_dl_support = <0x01>;
+		pktproc_cp_base = <0x00 0x20000000>;
+		pktproc_use_36bit_addr = <0x00>;
+		sbi_ap2cp_kerneltime_usec_pos = <0x00>;
+		sbi_ap2cp_kerneltime_usec_mask = <0xfffff>;
+		sbi_ap2cp_kerneltime_sec_pos = <0x14>;
+		sbi_ap2cp_kerneltime_sec_mask = <0xfff>;
+		sbi_cp_status_pos = <0x01>;
+		sbi_cp_status_mask = <0x0f>;
+		sbi_lte_active_pos = <0x05>;
+		sbi_lte_active_mask = <0x01>;
+		sbi_cp2ap_wakelock_pos = <0x06>;
+		sbi_cp2ap_wakelock_mask = <0x01>;
+		sbi_cp_rat_mode_pos = <0x1a>;
+		sbi_cp_rat_mode_mask = <0x3f>;
+		sbi_ap_status_pos = <0x01>;
+		sbi_ap_status_mask = <0x0f>;
+		sbi_pda_active_pos = <0x05>;
+		sbi_pda_active_mask = <0x01>;
+		sbi_ds_det_pos = <0x0e>;
+		sbi_ds_det_mask = <0x03>;
+		sbi_uart_noti_pos = <0x10>;
+		sbi_uart_noti_mask = <0x01>;
+		sbi_crash_type_pos = <0x17>;
+		sbi_crash_type_mask = <0x0f>;
+		sbi_lcd_status_pos = <0x1b>;
+		sbi_lcd_status_mask = <0x01>;
+		ap2cp_handover_block_info = <0x02 0x82c>;
+		ap2cp_kerneltime = <0x02 0x824>;
+		cp2ap_united_status = <0x02 0x80c>;
+		ap2cp_united_status = <0x02 0x808>;
+		cp2ap_msg = <0x02 0x804>;
+		ap2cp_msg = <0x02 0x800>;
+		ap_capability_1 = <0x00>;
+		ap_capability_0 = <0x00>;
+		capability_offset = <0xa0>;
+		srinfo_size = <0x300000>;
+		srinfo_offset = <0x400000>;
+		offset_capability_offset = <0x70>;
+		offset_srinfo_offset = <0x64>;
+		legacy_raw_rx_buffer_cached = <0x00>;
+		legacy_raw_rxq_size = <0x200000>;
+		legacy_raw_txq_size = <0x1fd000>;
+		legacy_raw_buffer_offset = <0x3000>;
+		legacy_raw_head_tail_offset = <0x18>;
+		legacy_fmt_rxq_size = <0x1000>;
+		legacy_fmt_txq_size = <0x1000>;
+		legacy_fmt_buffer_offset = <0x1000>;
+		legacy_fmt_head_tail_offset = <0x08>;
+		mif,irq_cp2ap_ratmode = <0x09>;
+		mif,irq_cp2ap_wakelock = <0x08>;
+		mif,irq_cp2ap_active = <0x03>;
+		mif,irq_cp2ap_status = <0x02>;
+		mif,irq_cp2ap_msg = <0x00>;
+		mif,int_ap2cp_uart_noti = <0x0f>;
+		mif,int_ap2cp_pcie_link_ack = <0x0e>;
+		mif,int_ap2cp_lcd_status = <0x04>;
+		mif,int_ap2cp_active = <0x03>;
+		mif,int_ap2cp_status = <0x02>;
+		mif,int_ap2cp_wakeup = <0x01>;
+		mif,int_ap2cp_msg = <0x00>;
+		mif,capability_check = <0x01>;
+		mif,interrupt_types = <0x01>;
+		mif,link_attrs = <0x17c8>;
+		mif,link_name = "PCIE";
+		mif,link_type = <0x01>;
+		mif,ipc_version = <0x32>;
+		mif,protocol = <0x01>;
+		mif,modem_type = <0x01>;
+		mif,cp_num = <0x00>;
+		mif,name = "s5300";
+		cpboot_spi_bus_num = <0x09>;
+		pci_db_addr = <0x14e60000>;
+		pci_ch_num = <0x00>;
+		status = "okay";
+		compatible = "samsung,exynos-cp";
+
+		iodevs {
+
+			io_device_14 {
+				iod,attrs = <0x00>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x01>;
+				iod,ch = <0x89>;
+				iod,name = "oem_test";
+			};
+
+			io_device_13 {
+				iod,ch_count = <0x08>;
+				iod,attrs = <0x2000>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x00>;
+				iod,ch = <0x81>;
+				iod,name = "oem_ipc";
+			};
+
+			io_device_12 {
+				iod,attrs = <0x00>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x01>;
+				iod,ch = <0x5e>;
+				iod,name = "umts_wfc1";
+			};
+
+			io_device_11 {
+				iod,attrs = <0x00>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x00>;
+				iod,ch = <0x5d>;
+				iod,name = "umts_wfc0";
+			};
+
+			io_device_10 {
+				iod,attrs = <0x00>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x01>;
+				iod,ch = <0x5c>;
+				iod,name = "umts_rcs1";
+			};
+
+			io_device_9 {
+				iod,attrs = <0x00>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x00>;
+				iod,ch = <0x5b>;
+				iod,name = "umts_rcs0";
+			};
+
+			io_device_8 {
+				iod,attrs = <0x200>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x00>;
+				iod,format = <0x04>;
+				iod,ch = <0xf1>;
+				iod,name = "umts_boot0";
+			};
+
+			io_device_7 {
+				iod,attrs = <0x00>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x03>;
+				iod,format = <0x03>;
+				iod,ch = <0x00>;
+				iod,name = "multipdp";
+			};
+
+			io_device_6 {
+				iod,attrs = <0x00>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x02>;
+				iod,format = <0x01>;
+				iod,ch = <0xd3>;
+				iod,name = "umts_dummy";
+			};
+
+			io_device_5 {
+				iod,ch_count = <0x1e>;
+				iod,attrs = <0x2000>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x02>;
+				iod,format = <0x01>;
+				iod,ch = <0xb5>;
+				iod,name = "rmnet";
+			};
+
+			io_device_4 {
+				iod,attrs = <0x00>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x01>;
+				iod,ch = <0x52>;
+				iod,name = "umts_loopback";
+			};
+
+			io_device_3 {
+				iod,attrs = <0x4000>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x01>;
+				iod,ch = <0x51>;
+				iod,name = "umts_dm0";
+			};
+
+			io_device_2 {
+				iod,attrs = <0x00>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x01>;
+				iod,ch = <0x15>;
+				iod,name = "umts_router";
+			};
+
+			io_device_1 {
+				iod,attrs = <0x00>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x01>;
+				iod,ch = <0x29>;
+				iod,name = "umts_rfs0";
+			};
+
+			io_device_0 {
+				iod,ch_count = <0x02>;
+				iod,attrs = <0x2000>;
+				iod,link_type = <0x01>;
+				iod,io_type = <0x01>;
+				iod,format = <0x00>;
+				iod,ch = <0xf5>;
+				iod,name = "umts_ipc";
+			};
+		};
+
+	};
+
+	pmu: system-controller@18060000 {
+		compatible = "samsung,gs101-pmu", "syscon";
+		reg = <0 0x18060000 0x10000>;
+	};
+
+	pinctrl@180D0000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x180d0000 0x1000>;
+
+		/* pin 2: warm reset by the CP, pin 3: warm reset of the CP's PMIC */
+		gpa0: gpa0 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 0x00 4>, <0 0x01 4>, <0 0x02 4>, <0 0x03 4>,
+			             <0 0x04 4>, <0 0x05 4>, <0 0x06 4>, <0 0x07 4>;
+		};
+	};
+
+	pinctrl@180E0000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x180e0000 0x1000>;
+
+		/* pin 2: power hold of the CP, pin 3: wakeup by the CP, pin 4: CP active */
+		gpa8: gpa8 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 0x38 4>, <0 0x39 4>, <0 0x3a 4>, <0 0x3b 4>,
+			             <0 0x3c 4>, <0 0x3d 4>, <0 0x3e 4>, <0 0x3f 4>;
+		};
+	};
+
+	pinctrl@11840000 {
+		compatible = "google,gs201-pinctrl";
+		reg = <0 0x11840000 0x1000>;
+
+		/*
+		 * pin 0: reset of PCIe channel 0 (PERST), pin 2: wakeup of the CP,
+		 * pin 3: dump notification to the CP
+		 */
+		gph0: gph0 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+
+		/*
+		 * pin 1: AP active, pin 2: power of the CP, pin 3: reset of the CP,
+		 * pin 6: warm reset of the CP
+		 */
+		gph1: gph1 {
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+	};
+
+	pcie@11920000 {
+		compatible = "samsung,exynos-pcie-rc";
+		reg = <0 0x11920000 0x2000>,    /* ELBI */
+		      <0 0x11960000 0xd000>,    /* UDBG */
+		      <0 0x11950000 0x2000>,    /* PHY */
+		      <0 0x11820000 0x2000>,    /* SYSREG_HSI1 */
+		      <0 0x11c00000 0x301000>,  /* DBI */
+		      <0 0x11940000 0x1000>,    /* PCS */
+		      <0 0x40ffe000 0x2000>,    /* configuration space */
+		      <0 0x11900000 0x1000>;    /* I/A */
+		reg-names = "elbi", "udbg", "phy", "sysreg", "dbi", "pcs", "config", "ia";
+		interrupts = <0 0x184 4>, <0 0x185 4>, <0 0x186 4>,
+		             <0 0x187 4>, <0 0x188 4>, <0 0x189 4>;
+		interrupt-names = "msi";
+		#interrupt-cells = <1>;
+		ep-device-type = <4>;
+		phy-power-off = "false";
+		gpios = <&gph0 0 1>;
+		samsung,syscon-phandle = <&pmu>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		device_type = "pci";
+		ranges = <0x82000000 0 0x14e00000 0 0x40000000 0 0xff0000>;
+		ip-ver = <0x984500>;
+		ch-num = <0>;
+		pcie-clk-num = <0>;
+		phy-clk-num = <0>;
+		pcie-pm-qos-int = <200000>;
+		separated-msi = <1>;
+		use-cache-coherency = "true";
+		use-pcieon-sleep = "true";
+		use-msi = "true";
+		use-sicd = "true";
+		use-sysmmu = "true";
+		use-ia = "true";
+		use-l1ss = "true";
+		use-secure-atu = "true";
+		pmu-offset = <0x3ec0>;
+		max-link-speed = <3>;
+	};
+
+	sysmmu@11860000 {
+		compatible = "samsung,pcie-sysmmu";
+		reg = <0 0x11860000 0x10000>;
+		interrupts = <0 0x196 4>;
+		qos = <15>;
+		port-name = "PCIe_CH0";
+		hsi-block-num = <1>;
+		pcie-vid-num = <0>;
+		#iommu-cells = <0>;
+		use-map-once = "true";
+	};
+
+	gic: interrupt-controller@10400000 {
+		compatible = "arm,gic-v3";
+		#interrupt-cells = <3>;
+		interrupt-controller;
+		reg = <0 0x10400000 0x10000>,
+		      <0 0x10440000 0x100000>;
+		interrupts = <1 9 4>;
+	};
+};

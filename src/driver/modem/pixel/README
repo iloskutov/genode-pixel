@@ -1,0 +1,47 @@
+Modem driver for the Google Pixel 7
+
+The driver 'pixel_modem' is a port of the vendor's modem interface driver
+'cpif' for the Samsung S5300 modem (port 'google_s5300') with the vendor's
+driver of PCIe channel 0, the link to the modem, and of its SysMMU (port
+'google_soc_gs'). It runs on the Linux 6.1 emulation of this repository
+(port 'pixel_linux').
+
+The character devices of the cpif ("umts_boot0", "umts_ipc0", ...) are
+provided as Android_chardev sessions, the last element of the session label
+names the device. A client drives the modem through them as the vendor's
+daemons do on Linux: it loads the firmware of the CP and boots it through
+the ioctls of "umts_boot0" and exchanges the CP's messages through reads and
+writes. Only the ioctls the daemons need pass (lx_user.c), the others fail
+with ENOTTY. The network devices of the cpif exist, no data is passed to
+Genode.
+
+The driver needs the platform devices 'pcie0', 'sysmmu_hsi1' and
+'cp_shmem', its device tree 'pixel_modem-google_pixel7.dtb' as ROM "dtb",
+and 'managing_system: yes': the power-management unit and the address
+translation of the PCIe controller are programmed through the secure
+monitor. The modem's lines are pins of the pin driver gs201_pio, which
+needs the devices 'gpio_alive', 'gpio_far_alive' and 'gpio_hsi1'. Its
+configuration, with the session labels "<bank>-<index>" of the driver:
+
+  outputs, low:   gph0-0 (PCIe reset), gph0-2, gph0-3, gph1-1, gph1-2,
+                  gph1-3, gph1-6, gpa0-3
+  inputs:         gpa8-2, pull down
+  inputs, pull down, interrupt on both edges:
+                  gpa0-2, gpa8-3, gpa8-4
+  function 2:     gph0-1 (PCIe clock request, pull up)
+
+The cpif waits for each change of its three input lines with a level
+interrupt whose level it inverts after every interrupt, the trigger of
+gs201_pio stays: both edges report every change. The interrupts are the IRQ
+sessions labeled 34 (gpa0-2), 91 (gpa8-3) and 92 (gpa8-4).
+
+The AP never suspends, the CP's wake locks have no effect. The link's power
+management is the CP's: it powers the link off when idle and on by
+cp2ap_wakeup, hundreds of times an hour, as it does on Android.
+
+The scenario 'run/modem_pixel' boots the CP's boot loader: 'test-modem_boot'
+loads the section BOOT of modem.bin from the firmware partition modem_a and
+starts it through "umts_boot0" ("modem_boot: PASS"). It needs the
+repository 'muesli' for the ext4 VFS plug-in and the port 'lwext4':
+
+! make run/modem_pixel KERNEL=hw BOARD=google_pixel7
