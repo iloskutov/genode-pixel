@@ -186,6 +186,7 @@ struct Driver::Cmu : private Noncopyable
 		CMU_TOP_BASE       = 0x1e080000,
 		CMU_PERIC0_BASE    = 0x10800000,
 		CMU_PERIC1_BASE    = 0x10c00000,
+		CMU_HSI1_BASE      = 0x11800000,
 		CMU_HSI2_BASE      = 0x14400000,
 		CMU_SIZE           = 0x4000,
 		SYSREG_PERIC0_BASE = 0x10821000,
@@ -216,8 +217,17 @@ struct Driver::Cmu : private Noncopyable
 		USI13_IPCLK_OFFSET = 0x2050,
 		USI13_PCLK_OFFSET  = 0x2054,
 
-		/* CMU_TOP: gate of the clock that feeds the PCIe part of HSI2 */
+		/* CMU_TOP: gates of the clocks that feed the PCIe parts of HSI1 and HSI2 */
+		TOP_HSI1_PCIE_OFFSET = 0x20bc,
 		TOP_HSI2_PCIE_OFFSET = 0x20c8,
+
+		/* CMU_HSI1: PCIe user multiplexer and the gates of PCIe channel 0 */
+		HSI1_PCIE_MUX_OFFSET   = 0x0610,
+		PCIE0_DBI_ACLK_OFFSET  = 0x203c,
+		PCIE0_MSTR_ACLK_OFFSET = 0x2040,
+		PCIE0_SLV_ACLK_OFFSET  = 0x2044,
+		PCIE0_DRV_APB_OFFSET   = 0x2048,
+		PCIE0_PHY_APB_OFFSET   = 0x2024,
 
 		/* CMU_HSI2: PCIe user multiplexer and the gates of PCIe channel 1 */
 		HSI2_PCIE_MUX_OFFSET   = 0x0620,
@@ -243,6 +253,7 @@ struct Driver::Cmu : private Noncopyable
 	Attached_mmio<0> _cmu_top       { _env, {(char *)CMU_TOP_BASE,       CMU_SIZE} };
 	Attached_mmio<0> _cmu_peric0    { _env, {(char *)CMU_PERIC0_BASE,    CMU_SIZE} };
 	Attached_mmio<0> _cmu_peric1    { _env, {(char *)CMU_PERIC1_BASE,    CMU_SIZE} };
+	Attached_mmio<0> _cmu_hsi1      { _env, {(char *)CMU_HSI1_BASE,      CMU_SIZE} };
 	Attached_mmio<0> _cmu_hsi2      { _env, {(char *)CMU_HSI2_BASE,      CMU_SIZE} };
 	Attached_mmio<0> _sysreg_peric0 { _env, {(char *)SYSREG_PERIC0_BASE, SYSREG_SIZE} };
 	Attached_mmio<0> _sysreg_peric1 { _env, {(char *)SYSREG_PERIC1_BASE, SYSREG_SIZE} };
@@ -347,6 +358,25 @@ struct Driver::Cmu : private Noncopyable
 	Sysreg_bits _pcie1_iocc { _clocks, "pcie1-iocc",
 	                          _sysreg_hsi2.range_at(PCIE1_IOCC_OFFSET),
 	                          IOCC_MASK, IOCC_MASK };
+
+	/*
+	 * PCIe channel 0, the link to the modem, as channel 1. The vendor's
+	 * driver sets the coherency bits of SYSREG_HSI1 itself.
+	 */
+	Gate _top_hsi1_pcie   { _clocks, "top-hsi1-pcie",   _osc_clk,
+	                        _cmu_top.range_at(TOP_HSI1_PCIE_OFFSET) };
+	Mux  _hsi1_pcie_mux   { _clocks, "hsi1-pcie-mux",
+	                        _cmu_hsi1.range_at(HSI1_PCIE_MUX_OFFSET) };
+	Gate _pcie0_dbi_aclk  { _clocks, "pcie0-dbi-aclk",  _osc_clk,
+	                        _cmu_hsi1.range_at(PCIE0_DBI_ACLK_OFFSET) };
+	Gate _pcie0_mstr_aclk { _clocks, "pcie0-mstr-aclk", _osc_clk,
+	                        _cmu_hsi1.range_at(PCIE0_MSTR_ACLK_OFFSET) };
+	Gate _pcie0_slv_aclk  { _clocks, "pcie0-slv-aclk",  _osc_clk,
+	                        _cmu_hsi1.range_at(PCIE0_SLV_ACLK_OFFSET) };
+	Gate _pcie0_drv_apb   { _clocks, "pcie0-drv-apb",   _osc_clk,
+	                        _cmu_hsi1.range_at(PCIE0_DRV_APB_OFFSET) };
+	Gate _pcie0_phy_apb   { _clocks, "pcie0-phy-apb",   _osc_clk,
+	                        _cmu_hsi1.range_at(PCIE0_PHY_APB_OFFSET) };
 
 	Cmu(Genode::Env &env, Clocks &clocks, Clock &osc_clk)
 	:

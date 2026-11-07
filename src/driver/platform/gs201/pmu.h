@@ -90,6 +90,7 @@ struct Driver::Pmu : private Noncopyable
 		PD_G3D_OFFSET          = 0x1e00,
 		PD_EMBEDDED_G3D_OFFSET = 0x2000,
 		PD_HSI0_OFFSET = 0x2080,
+		PD_HSI1_OFFSET = 0x2100,
 		PD_DPU_OFFSET  = 0x2200,
 		PD_DISP_OFFSET = 0x2280,
 	};
@@ -109,6 +110,10 @@ struct Driver::Pmu : private Noncopyable
 	 */
 	Power_domain _usb_power  { _powers, "usb-power",
 	                           _pmu.range_at(PD_HSI0_OFFSET), nullptr };
+
+	/* PCIe channel 0, the link to the modem: pd_hsi1 */
+	Power_domain _hsi1_power { _powers, "hsi1-power",
+	                           _pmu.range_at(PD_HSI1_OFFSET), nullptr };
 
 	/* GPU: pd_g3d, and pd_embedded_g3d with pd_g3d as parent */
 	Power_domain _g3d_power       { _powers, "g3d-power",

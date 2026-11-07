@@ -7,6 +7,7 @@ devices
   . interrupt, numbered as in the device tree plus 32.
   .
   + io_mem | address: 0x180d0000 | size: 0x1000
+  + irq    | number: 34 | . gpa0-2, warm reset of the modem (CP2AP_CP_WRST_N)
   + irq    | number: 74 | . gpa10-0, power key
   + irq    | number: 75 | . gpa10-1, volume-down key
 
@@ -19,6 +20,8 @@ devices
   + io_mem | address: 0x180e0000 | size: 0x1000
   + irq    | number: 79 | . gpa6-3, interrupt of the top speaker amplifier
   + irq    | number: 84 | . gpa7-0, interrupt of the touchscreen
+  + irq    | number: 91 | . gpa8-3, wakeup by the modem (CP2AP_WAKEUP)
+  + irq    | number: 92 | . gpa8-4, modem active (CP2AP_PHONE_ACTIVE)
   + irq    | number: 93 | . gpa8-5, volume-up key
   + irq    | number: 94 | . gpa8-6, interrupt of the bottom speaker amplifier
 
@@ -261,6 +264,61 @@ devices
   + clock pcie1-drv-apb
   + clock pcie1-phy-apb
   + clock pcie1-iocc
+
++ device gpio_hsi1 | type: samsung,gs201-gpio
+  .
+  . GPIO controller of the HSI1 block (banks gph0 and gph1), used by the
+  . pin driver gs201_pio for the reset line of PCIe channel 0 and the
+  . control lines of the modem
+  .
+  + io_mem | address: 0x11840000 | size: 0x1000
+
++ device pcie0 | type: samsung,exynos-pcie-rc
+  .
+  . PCIe channel 0 of the HSI1 block (pcie@11920000), the link to the
+  . modem. The vendor's driver sets the shareability bits in SYSREG_HSI1.
+  .
+  + io_mem | address: 0x11920000 | size: 0x2000   | . ELBI
+  + io_mem | address: 0x11960000 | size: 0xd000   | . UDBG
+  + io_mem | address: 0x11950000 | size: 0x2000   | . PHY
+  + io_mem | address: 0x11820000 | size: 0x2000   | . SYSREG_HSI1
+  + io_mem | address: 0x11c00000 | size: 0x301000 | . DBI
+  + io_mem | address: 0x11940000 | size: 0x1000   | . PCS
+  + io_mem | address: 0x40ffe000 | size: 0x2000   | . configuration space
+  + io_mem | address: 0x11900000 | size: 0x1000   | . I/A
+  + io_mem | address: 0x40000000 | size: 0xff0000 | . memory window
+  + irq    | number: 420 | . ELBI
+  + irq    | number: 421 | . MSI 0-4
+  + irq    | number: 422
+  + irq    | number: 423
+  + irq    | number: 424
+  + irq    | number: 425
+  + clock top-hsi1-pcie
+  + clock hsi1-pcie-mux
+  + clock pcie0-dbi-aclk
+  + clock pcie0-mstr-aclk
+  + clock pcie0-slv-aclk
+  + clock pcie0-drv-apb
+  + clock pcie0-phy-apb
+  + power-domain hsi1-power
+
++ device sysmmu_hsi1 | type: samsung,pcie-sysmmu
+  .
+  . SysMMU of PCIe channel 0 (sysmmu@11860000), driven by the modem driver
+  .
+  + io_mem | address: 0x11860000 | size: 0x10000
+  + irq    | number: 438
+
++ device cp_shmem | type: samsung,exynos-cp-shmem
+  .
+  . Memory shared with the modem's CP, reserved by the vendor's device tree:
+  . IPC (cp_rmem), packet processing (cp_rmem_1), both mapped
+  . write-combined, and the MSI page with the CP's boot stage and error
+  . report (cp_msi_rmem), uncached
+  .
+  + io_mem | address: 0xea400000 | size: 0x800000  | wc: yes | . IPC
+  + io_mem | address: 0xe8000000 | size: 0x2000000 | wc: yes | . packet processing
+  + io_mem | address: 0xf6200000 | size: 0x1000    | . MSI
 
 + device gpu | type: arm,mali-valhall-csf
   .
