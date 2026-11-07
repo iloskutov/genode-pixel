@@ -55,9 +55,13 @@ INIT_FILES = [
 	'/vendor/etc/init/init.shared_modem_platform_l.rc',
 ]
 
-# where the dynamic linker of the phone looks for the libraries
-LIB_DIRS = [ '/vendor/lib64', '/vendor/lib64/hw', '/system/lib64',
-             '/system_ext/lib64', '/odm/lib64' ]
+# where the dynamic linker of the phone looks for the libraries: a vendor
+# object finds its libraries in the vendor directories first, a system
+# object in the system directories only (as 'android_loader' does)
+VENDOR_DIRS = [ '/vendor/lib64/hw', '/vendor/lib64', '/odm/lib64' ]
+SYSTEM_DIRS = [ '/system/lib64', '/system_ext/lib64',
+                '/apex/com.android.runtime/lib64/bionic',
+                '/apex/com.android.runtime/lib64' ]
 
 # properties naming libraries that are loaded at run time
 LIB_PROPERTIES = [ 'vendor.rild.libpath', 'rild.libpath' ]
@@ -161,12 +165,15 @@ def pull_vendor(root):
 			missing.add(path)
 			continue
 
+		vendor = path.startswith('/vendor/') or path.startswith('/odm/')
+		dirs   = (VENDOR_DIRS if vendor else []) + SYSTEM_DIRS
+
 		for lib in needed(root + path):
 			if '/' in lib or lib in ('.', '..'):
 				missing.add(lib)   # a NEEDED entry is a file name
 				continue
 			found = None
-			for d in LIB_DIRS:
+			for d in dirs:
 				candidate = d + '/' + lib
 				if candidate in done or shell('ls ' + shlex.quote(candidate)).strip() == candidate:
 					found = candidate
