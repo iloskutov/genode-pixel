@@ -1,0 +1,80 @@
+#
+# The unwinder of 'android_loader' with the phone's libc++.so
+#
+# 'test-android_unwind' of 'goa-packages' is an Android program that throws
+# C++ exceptions inside libc++.so and catches them, runs destructors on the
+# way, rethrows, and throws from two threads at once. The loader's unwinder
+# is the one of the tool chain's libgcc_eh. libc++.so comes from
+# 'contrib/pixel_modem_vendor.tar' (see 'tool/pull_modem_files').
+#
+#   goa export -C android-launcher/android_prop
+#   goa export -C android-launcher/android_binder
+#   goa export -C android-launcher/android_loader
+#   goa export -C android-launcher/test-android_unwind
+#
+#   make run/android_unwind_pixel KERNEL=hw BOARD=google_pixel7
+#
+
+assert {[have_board google_pixel7]}
+
+set vendor_tar [genode_dir]/contrib/pixel_modem_vendor.tar
+
+if {![file isfile $vendor_tar]} {
+	puts stderr "Error: $vendor_tar missing, see the header of this script"
+	exit 1
+}
+
+build {
+	core init lib/ld timer
+	lib/vfs lib/libc lib/libm lib/posix lib/stdcxx
+}
+
+create_boot_directory
+
+import_from_depot iloskutov_pixel7/src/android_loader/2026-11-07 \
+                  iloskutov_pixel7/src/android_prop/2026-11-07 \
+                  iloskutov_pixel7/src/android_binder/2026-11-07 \
+                  iloskutov_pixel7/src/test-android_unwind/2026-11-08
+
+#
+# The test program and libc++.so as tar archive 'android.tar'
+#
+set root [run_dir]/android_root
+
+exec rm -rf $root
+exec mkdir -p $root/system/bin
+exec tar xf $vendor_tar -C $root system/lib64/libc++.so
+exec mv [run_dir]/genode/test-android_unwind $root/system/bin/
+exec tar cf [run_dir]/genode/android.tar -C $root .
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start test-android_unwind | caps: 300 | ram: 64M
+  + binary android_loader
+  + config | program: /system/bin/test-android_unwind
+    + vfs
+      + tar android.tar
+      + dir dev | + log
+    + libc | stdout: /dev/log | stderr: /dev/log
+  + route
+    + service Timer | + child timer
+    + any-service   | + parent
+-
+}
+
+build_boot_image [build_artifacts]
+
+run_genode_until {test-android_unwind: (passed|failed).*\n} 60
