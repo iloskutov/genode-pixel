@@ -41,6 +41,7 @@
 #include "modem_utils.h"
 
 #include "lx_bridge.h"
+#include "uplink.h"
 
 
 /*********************
@@ -401,6 +402,8 @@ void lx_user_init(void)
 		_workers[i].task = _spawn(bridge_worker_task, &_workers[i]);
 
 	_spawn(bridge_start_task, NULL);
+
+	uplink_init();
 }
 
 

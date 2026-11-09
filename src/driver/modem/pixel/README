@@ -12,8 +12,21 @@ names the device. A client drives the modem through them as the vendor's
 daemons do on Linux: it loads the firmware of the CP and boots it through
 the ioctls of "umts_boot0" and exchanges the CP's messages through reads and
 writes. Only the ioctls the daemons need pass (lx_user.c), the others fail
-with ENOTTY. The network devices of the cpif exist, no data is passed to
-Genode.
+with ENOTTY. The config says which client may open which device:
+
+! config
+! + policy | label_prefix: cbd
+!   + node | prefix: umts_boot
+! + uplink | interface: rmnet1
+
+The network interfaces of the cpif ("rmnet0" ...) carry the raw IP packets
+of the mobile-data contexts; rild names the interface of a context when it
+sets the context up. The packets of the interface the 'uplink' node names
+travel through an Uplink session labeled by the interface (uplink.c), with
+an Ethernet header destined to the session's MAC address, IPv4 and IPv6
+only. The NIC router's uplink domain for it is a point-to-point link
+without ARP ('use_arp: no', the context's address with prefix 32, any
+gateway).
 
 The driver needs the platform devices 'pcie0', 'sysmmu_hsi1' and
 'cp_shmem', its device tree 'pixel_modem-google_pixel7.dtb' as ROM "dtb",
@@ -54,4 +67,5 @@ pulled by 'tool/pull_modem_files'.
 The scenario 'run/modem_stack_pixel' runs the phone's whole modem stack,
 cbd, rild, rfsd, and shared_modem_platform under 'modem_orchestrator', with
 'rild_modem' and 'modem_console' of 'goa-packages': the modem answers calls
-and logs received SMS.
+and logs received SMS. 'run/modem_fetchurl_pixel' adds a mobile-data
+context and fetches a web page through it.

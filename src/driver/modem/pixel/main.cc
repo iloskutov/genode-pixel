@@ -5,7 +5,8 @@
  *
  * Provides the device nodes of the cpif as Android_chardev sessions
  * (lx_user.c). The clients drive the modem through them as the vendor
- * daemons do on Linux.
+ * daemons do on Linux. The packets of the network interface the config
+ * names travel through an Uplink session (uplink.c).
  */
 
 /*
@@ -30,6 +31,8 @@
 #include <lx_user/io.h>
 
 #include <lx_bridge.h>
+#include <uplink.h>
+#include <genode_c_api/uplink.h>
 
 namespace Pixel_modem {
 	using namespace Genode;
@@ -276,7 +279,31 @@ struct Pixel_modem::Main : Noncopyable
 	void _handle_signal()
 	{
 		lx_user_handle_io();
+		uplink_handle_io();
 		Lx_kit::env().scheduler.execute();
+		genode_uplink_notify_peers();
+	}
+
+	/*
+	 * '+ uplink | interface: rmnetN': the network interface whose packets
+	 * an Uplink session carries, the one of the data context
+	 */
+	Attached_rom_dataspace _config { _env, "config" };
+
+	Signal_handler<Main> _config_handler {
+		_env.ep(), *this, &Main::_handle_config };
+
+	void _handle_config()
+	{
+		_config.update();
+
+		String<16> interface { };
+		_config.node().with_optional_sub_node("uplink", [&] (Genode::Node const &n) {
+			interface = n.attribute_value("interface", String<16>()); });
+
+		uplink_interface(interface.string());
+		Lx_kit::env().scheduler.execute();
+		genode_uplink_notify_peers();
 	}
 
 	Backend _backend { _signal_handler };
@@ -314,9 +341,16 @@ Pixel_modem::Main::Main(Env &env) : _env(env)
 
 	_notifier.start();
 
+	genode_uplink_init(genode_env_ptr(_env), genode_allocator_ptr(Lx_kit::env().heap),
+	                   genode_signal_handler_ptr(_signal_handler));
+
 	_main_ptr = this;
 
 	lx_emul_start_kernel(_dtb_rom.local_addr<void>());
+
+	/* after the kernel started the task of the uplink */
+	_config.sigh(_config_handler);
+	_handle_config();
 }
 
 

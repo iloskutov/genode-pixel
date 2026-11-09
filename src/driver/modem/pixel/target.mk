@@ -14,7 +14,11 @@ INC_DIR += $(PRG_DIR)
 INC_DIR += $(LX_SRC_DIR)/scripts/dtc/libfdt
 
 SRC_CC  += main.cc
-SRC_C   += lx_user.c lx_emul.c dummies.c
+SRC_C   += lx_user.c lx_emul.c dummies.c uplink.c
+
+# the Uplink session of the mobile data (uplink.c)
+SRC_CC  += genode_c_api/uplink.cc
+vpath genode_c_api/uplink.cc $(subst /genode_c_api,,$(call select_from_repositories,src/lib/genode_c_api))
 SRC_C   += $(notdir $(wildcard $(PRG_DIR)/generated_dummies.c))
 
 # common 6.1 kernel dummies
