@@ -1,0 +1,240 @@
+#
+# Mobile data of the Google Pixel 7: fetchurl over the modem
+#
+# The phone's own modem daemons boot and drive the CP (modem_stack.inc).
+# 'modem_console' switches the modem on and asks 'rild_modem' for a
+# mobile-data context; rild sets up the data call and names its network
+# interface of 'pixel_modem' ('rmnetN') and the address, which 'rild_modem'
+# reports:
+#
+#   modem_console: network: registered <operator> lte
+#   modem_console: data: active rmnet1 100.64.12.34/32 1.1.1.1
+#
+# From modem_console's report "data" of the context, 'modem_config' tells
+# 'pixel_modem' which interface
+# its Uplink session carries, 'router_config' gives 'nic_router' the
+# address of the uplink domain, a point-to-point link without ARP, and
+# 'fetch_config' starts 'fetchurl', which downloads Mozilla's
+# connectivity-check page and logs it ("success"). The test succeeded when
+# "fetchurl" exits with the value 0.
+#
+# The files of the phone are not part of Genode, see 'tool/pull_modem_files'.
+# The SIM must have mobile data; the download is a few hundred bytes.
+#
+#   make run/modem_fetchurl_pixel KERNEL=hw BOARD=google_pixel7
+#
+# Environment variables:
+#
+#   SIM_PIN=<pin>       PIN of the SIM, if it needs one
+#   ATTACH_APN=<apn>    APN of the initial attach (default "internet")
+#   DATA_APN=<apn>      APN of the data context (default ATTACH_APN)
+#   DNS=<ip>            DNS server if the network names no IPv4 one
+#                       (default 1.1.1.1)
+#   RIL_LOG_LEVEL=<l>   log level of rild: verbose|debug|info|warn|error
+#                       (default warn)
+#
+
+assert {[have_board google_pixel7]}
+
+source [genode_dir]/repos/pixel/run/modem_pixel.inc
+source [genode_dir]/repos/pixel/run/modem_stack.inc
+
+proc env_or { name default } {
+	return [expr {[info exists ::env($name)] ? $::env($name) : $default}] }
+
+set sim_pin       [env_or SIM_PIN ""]
+set attach_apn    [env_or ATTACH_APN internet]
+set data_apn      [env_or DATA_APN $attach_apn]
+set dns_default   [env_or DNS 1.1.1.1]
+set ril_log_level [env_or RIL_LOG_LEVEL warn]
+
+if {[lsearch -exact {verbose debug info warn error} $ril_log_level] < 0} {
+	puts stderr "Error: RIL_LOG_LEVEL must be verbose, debug, info, warn, or error"
+	exit 1
+}
+
+build [list core init lib/ld timer {*}[modem_stack_targets] \
+            server/rom_filter server/nic_router \
+            lib/vfs_jitterentropy lib/vfs_lwip lib/vfs_pipe \
+            lib/curl-minimal lib/libssl-minimal lib/libcrypto-minimal lib/zlib \
+            app/fetchurl]
+
+create_boot_directory
+
+modem_stack_import
+
+set fw_version [modem_stack_files]
+
+set console_attrs " | attach_apn: $attach_apn | data_apn: $data_apn"
+if {$sim_pin ne ""} { append console_attrs " | pin: $sim_pin" }
+
+#
+# Input of a filter: an attribute of modem_console's report of the data
+# context, which changes only with the context (the modem's state changes
+# with every change of the signal strength, and each new config makes
+# 'nic_router' reattach its sessions)
+#
+proc data_input { name attr { default "" } } {
+	set out "    + input $name | rom: data | node: data | default:"
+	if {$default ne ""} { append out " $default" }
+	return "$out\n      + attribute $attr\n"
+}
+
+install_config {
+config
++ affinity-space | width: 8 | height: 1
+
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start report_rom | ram: 4M
+  + provides
+    + service Report
+    + service ROM
+  + config
+    + policy | label: rild_modem -> config    | report: modem_console -> config
+    + policy | label: modem_console -> state | report: rild_modem -> state
+    + policy | label: modem_config -> data   | report: modem_console -> data
+    + policy | label: router_config -> data  | report: modem_console -> data
+    + policy | label: fetch_config -> data   | report: modem_console -> data
+  + route | + any-service | + parent
+} [modem_pixel_drivers] [modem_stack_start_nodes $fw_version $ril_log_level {  + route
+    + service ROM | label: config | + child modem_config
+    + service Uplink              | + child nic_router}] {
++ start modem_console
+  + config} $console_attrs {
+  + route
+    + service ROM | label: state | + child report_rom
+    + service Report            | + child report_rom
+    + any-service               | + parent
+
++ start modem_config
+  . pixel_modem's config: the device nodes, and the interface of the data
+  . context while it is active
+  + binary rom_filter
+  + provides | + service ROM
+  + config
+} [data_input data_state state] [data_input ifname ifname] {    + output | node: config
+      + inline
+} [modem_chardev_policies "        "] {      + if
+        + has_value | input: data_state | value: active
+        + then
+          + node | type: uplink
+            + attribute | name: interface | input: ifname
+  + route
+    + service ROM | label: data  | + child report_rom
+    + any-service               | + parent
+
++ start router_config
+  . nic_router's config: the uplink domain gets the context's address, the
+  . link is point to point (any gateway, no ARP); the downlink's DHCP server
+  . names the context's DNS server
+  + binary rom_filter
+  + provides | + service ROM
+  + config
+} [data_input data_state state] [data_input address address] [data_input dns dns $dns_default] {    + output | node: config
+      + attribute | name: verbose_domain_state | value: yes
+      + inline
+        + policy | label_prefix: fetch -> fetchurl | domain: downlink
+        + policy | label_prefix: pixel_modem       | domain: uplink
+      + node | type: domain
+        + attribute | name: name    | value: uplink
+        + attribute | name: use_arp | value: no
+        + if
+          + has_value | input: data_state | value: active
+          + then
+            + attribute | name: interface | input: address
+            + attribute | name: gateway   | value: 10.0.0.1
+        + inline
+          + nat | domain: downlink | tcp-ports: 16384 | udp-ports: 16384 | icmp-ids: 16384
+      + node | type: domain
+        + attribute | name: name      | value: downlink
+        + attribute | name: interface | value: 10.0.3.1/24
+        + node | type: dhcp-server
+          + attribute | name: ip_first | value: 10.0.3.2
+          + attribute | name: ip_last  | value: 10.0.3.2
+          + node | type: dns-server
+            + attribute | name: ip | input: dns
+        + inline
+          + tcp  | dst: 0.0.0.0/0 | + permit-any | domain: uplink
+          + udp  | dst: 0.0.0.0/0 | + permit-any | domain: uplink
+          + icmp | dst: 0.0.0.0/0 | domain: uplink
+  + route
+    + service ROM | label: data  | + child report_rom
+    + any-service               | + parent
+
++ start nic_router | caps: 200 | ram: 10M
+  + provides
+    + service Nic
+    + service Uplink
+  + route
+    + service ROM | label: config | + child router_config
+    + service Timer               | + child timer
+    + any-service                 | + parent
+
++ start fetch_config
+  . the config of 'fetch': fetchurl starts once the data context is active
+  + binary rom_filter
+  + provides | + service ROM
+  + config
+} [data_input data_state state] {    + output | node: config
+      + inline
+        + parent-provides
+          + service ROM
+          + service PD
+          + service RM
+          + service CPU
+          + service LOG
+          + service Timer
+          + service Nic
+        + default | caps: 100 | ram: 1M
+      + if
+        + has_value | input: data_state | value: active
+        + then
+          + inline
+            + start fetchurl | caps: 500 | ram: 32M
+              + config
+                + vfs
+                  + dir dev
+                    + log
+                    + null
+                    + jitterentropy random
+                    + jitterentropy urandom
+                    + inline rtc | : 2026-11-09 12:00
+                  + dir pipe   | + pipe
+                  + dir socket | + lwip | dhcp: yes
+                + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc | rng: /dev/random | pipe: /pipe | socket: /socket
+                + fetch | url: http://detectportal.firefox.com/success.txt | path: /dev/log | retry: 3
+              + route | + any-service | + parent
+  + route
+    + service ROM | label: data  | + child report_rom
+    + any-service               | + parent
+
++ start fetch | caps: 700 | ram: 40M
+  + binary init
+  + route
+    + service ROM | label: config | + child fetch_config
+    + service Nic                 | + child nic_router
+    + service Timer               | + child timer
+    + any-service                 | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
