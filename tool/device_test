@@ -9,6 +9,8 @@
 #   device_test [--follow] <scenario> [seconds]
 #   device_test [--follow] --capture [seconds] [name]
 #   device_test --reset
+#   device_test --stop
+#   device_test --flash-modem-b <image>
 #
 # <scenario> is the name of a run script, with or without 'run/'. The tool
 # builds the image with
@@ -22,12 +24,26 @@
 # line (the reset monitor of REBOOT=serial). The capture goes on until the
 # phone is back in fastboot or ADB mode. If the tool ends in another way
 # once the image was booted (error, Ctrl-C, kill), it sends "RST" as well.
-# Nothing is flashed.
+# Nothing is flashed, except by '--flash-modem-b'.
 #
 # '--capture' records the serial output of the image that is running,
 # without booting or resetting anything (default 60 s). '--reset' only
-# sends "RST". With '--follow', the serial capture is also shown on stdout
-# while it is written.
+# sends "RST". '--stop' ends the active run early, when going on is
+# useless: during the build or the wait for the phone the run ends there;
+# during the capture it resets the phone, waits until it is back, and
+# writes its log as at the end of the capture time.
+#
+# '--flash-modem-b' writes an image to the partition modem_b, the modem
+# firmware of the other boot slot, which MüesliOS uses as the file system
+# of its packages during development. The phone must be in fastboot mode
+# with slot a active (else modem_b could be the firmware in use), and be
+# the only device in fastboot mode unless PHONE_SERIAL names it. No other
+# partition is ever written.
+#
+# With '--follow', the serial capture is also shown on stdout while it is
+# written. The exit status is 0 only if the run went as intended: 1 after a
+# failed build or boot, a stop before the boot, or a phone that did not
+# come back.
 #
 # Each run gets its own directory <log dir>/<name>_<date>_<time>, and
 # <log dir>/latest points to it:
@@ -107,12 +123,48 @@ check_serial()
 
 send_reset() { printf 'RST\n' > "$SERIAL"; }
 
+#
+# The capture time: the pid of its 'sleep' is in this file, for '--stop'. A
+# background 'sleep' and 'wait', so that a signal of the tool takes effect at
+# once, not after the 'sleep'. Returns 1 if the capture was ended early.
+#
+WAIT_FILE=""
+capture_wait()
+{
+	stop_requested && return 1
+	WAIT_FILE="$LOG_DIR/.device_test.wait"
+	sleep "$1" 9>&- &
+	local pid=$!
+	echo "$pid" > "$WAIT_FILE"
+	wait "$pid" 2>/dev/null
+	local status=$?
+	rm -f "$WAIT_FILE"
+	[ $status -eq 0 ]
+}
+
+#
+# '--stop' leaves this file for the run, which looks for it wherever it
+# waits: for the build, for the phone, during the capture
+#
+stop_requested() { [ -f "$LOG_DIR/.device_test.stop" ]; }
+
 # one run at a time: runs share the build directory and the phone
 lock_run()
 {
 	mkdir -p "$LOG_DIR" || die "cannot create $LOG_DIR"
 	exec 9> "$LOG_DIR/.device_test.lock"
 	flock -n 9 || die "another run of device_test is active"
+
+	# what a run that was killed left behind
+	rm -f "$LOG_DIR/.device_test.stop" "$LOG_DIR/.device_test.wait" \
+	      "$LOG_DIR/.device_test.build"
+}
+
+# whether a run holds the lock
+run_active()
+{
+	[ -f "$LOG_DIR/.device_test.lock" ] || return 1
+	( exec 8< "$LOG_DIR/.device_test.lock"; ! flock -n 8 )
 }
 
 new_run_dir()
@@ -175,6 +227,8 @@ stop_capture()
 RESET_PENDING=0
 on_exit()
 {
+	[ -n "$WAIT_FILE" ] && [ -f "$WAIT_FILE" ] && { kill "$(cat "$WAIT_FILE")" 2>/dev/null; rm -f "$WAIT_FILE"; }
+	rm -f "$LOG_DIR/.device_test.stop" "$LOG_DIR/.device_test.build"
 	stop_capture
 	if [ "$RESET_PENDING" = 1 ]; then
 		echo "Tool ended before the reset, sending RST" >&2
@@ -185,10 +239,10 @@ on_exit()
 start_capture()
 {
 	: > "$RUN_DIR/serial.log"
-	cat "$SERIAL" > "$RUN_DIR/serial.log" &
+	cat "$SERIAL" > "$RUN_DIR/serial.log" 9>&- &
 	SERIAL_PID=$!
 	if [ "$FOLLOW" = 1 ]; then
-		tail -n +1 -f --pid="$SERIAL_PID" "$RUN_DIR/serial.log" &
+		tail -n +1 -f --pid="$SERIAL_PID" "$RUN_DIR/serial.log" 9>&- &
 		FOLLOW_PID=$!
 	fi
 	trap on_exit EXIT
@@ -196,11 +250,17 @@ start_capture()
 	trap 'exit 143' TERM
 }
 
+# 1 if something went wrong that the log names: the exit status of a run
+FAILED=0
+
 summary()
 {
 	log ""
 	log "Serial capture split per boot:"
-	"$TOOL_DIR/split_serial_log" "$@" "$RUN_DIR/serial.log" | tee -a "$RUN_DIR/run.log"
+	"$TOOL_DIR/split_serial_log" "$@" "$RUN_DIR/serial.log" > "$RUN_DIR/.split" 2>&1 \
+		|| { FAILED=1; echo "Error: the capture could not be split" >> "$RUN_DIR/.split"; }
+	tee -a "$RUN_DIR/run.log" < "$RUN_DIR/.split"
+	rm -f "$RUN_DIR/.split"
 	log ""
 	log "Logs: $RUN_DIR"
 }
@@ -225,6 +285,44 @@ case "${1:-}" in
 	exit 0
 	;;
 
+--stop)
+	[ $# -eq 1 ] || die "usage: $0 --stop"
+	run_active || die "no run of device_test is active"
+
+	# the run finds this wherever it waits; its build and its capture end now
+	: > "$LOG_DIR/.device_test.stop"
+	for f in "$LOG_DIR/.device_test.build" "$LOG_DIR/.device_test.wait"; do
+		[ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null
+	done
+	echo "Stop requested: the run ends what it does and finishes its log" \
+	     "(a booted image is reset)"
+	exit 0
+	;;
+
+--flash-modem-b)
+	[ $# -eq 2 ] || die "usage: $0 --flash-modem-b <image>"
+	[ -f "$2" ] || die "no image $2"
+	lock_run
+	in_fastboot || die "the phone is not in fastboot mode"
+
+	# one phone, and that one: fastboot would pick any
+	if [ -z "${PHONE_SERIAL:-}" ] \
+	&& [ "$("${FASTBOOT[@]}" devices 2>/dev/null | grep -c .)" -ne 1 ]; then
+		die "more than one device in fastboot mode, name the phone by PHONE_SERIAL"; fi
+
+	# modem_b is free only while the phone boots from slot a
+	SLOT="$("${FASTBOOT[@]}" getvar current-slot 2>&1 | sed -n 's/^current-slot: *//p')"
+	[ "$SLOT" = "a" ] \
+		|| die "the active slot is '${SLOT:-unknown}', not a: modem_b may be the modem firmware in use"
+
+	new_run_dir flash_modem_b
+	log "Flashing modem_b with $2 ($(stat -c %s "$2") bytes, sha256 $(sha256sum "$2" | cut -d' ' -f1))"
+	"${FASTBOOT[@]}" flash modem_b "$2" >> "$RUN_DIR/run.log" 2>&1 \
+		|| { log "Error: fastboot flash failed"; exit 1; }
+	log "modem_b flashed"
+	exit 0
+	;;
+
 --capture)
 	SECONDS_TO_CAPTURE="${2:-60}"
 	case "$SECONDS_TO_CAPTURE" in ''|*[!0-9]*) die "seconds must be a number";; esac
@@ -233,14 +331,14 @@ case "${1:-}" in
 	new_run_dir "${3:-capture}"
 	log "Capture of the running image on $SERIAL for ${SECONDS_TO_CAPTURE}s"
 	start_capture
-	sleep "$SECONDS_TO_CAPTURE"
+	capture_wait "$SECONDS_TO_CAPTURE" || log "Capture ended early (--stop)"
 	stop_capture
 	summary --running
-	exit 0
+	exit $FAILED
 	;;
 
 ''|-*)
-	die "usage: $0 [--follow] <scenario> [seconds] | [--follow] --capture [seconds] [name] | --reset"
+	die "usage: $0 [--follow] <scenario> [seconds] | [--follow] --capture [seconds] [name] | --reset | --stop | --flash-modem-b <image>"
 	;;
 esac
 
@@ -266,8 +364,17 @@ log "Building run/$SCENARIO (build.log)..."
 IMAGE="$BUILD_DIR/var/run/$SCENARIO.img"
 rm -f "$IMAGE"
 make -C "$BUILD_DIR" "run/$SCENARIO" KERNEL=hw BOARD=google_pixel7 REBOOT=serial \
-	> "$RUN_DIR/build.log" 2>&1
+	> "$RUN_DIR/build.log" 2>&1 9>&- &
+echo $! > "$LOG_DIR/.device_test.build"
+wait $!
 BUILD_STATUS=$?
+rm -f "$LOG_DIR/.device_test.build"
+if stop_requested; then
+	rm -f "$LOG_DIR/.device_test.stop"
+	log "Stopped during the build (--stop), nothing booted"
+	log "Logs: $RUN_DIR"
+	exit 1
+fi
 if [ $BUILD_STATUS -ne 0 ] || [ ! -f "$IMAGE" ] ||
    ! grep -q "Created boot image var/run/$SCENARIO.img" "$RUN_DIR/build.log"; then
 	tail -n 20 "$RUN_DIR/build.log"
@@ -283,11 +390,18 @@ log "Image: $IMAGE ($(stat -c %s "$IMAGE") bytes, sha256 $(sha256sum "$IMAGE" | 
 log "Waiting for the phone in fastboot or ADB mode..."
 MODE=""
 for i in $(seq 1 120); do
-	if in_fastboot; then MODE=fastboot; break; fi
-	if in_adb;      then MODE=adb;      break; fi
+	if stop_requested; then MODE=stopped;  break; fi
+	if in_fastboot;    then MODE=fastboot; break; fi
+	if in_adb;         then MODE=adb;      break; fi
 	sleep 1
 done
 case "$MODE" in
+stopped)
+	rm -f "$LOG_DIR/.device_test.stop"
+	log "Stopped while waiting for the phone (--stop), nothing booted"
+	log "Logs: $RUN_DIR"
+	exit 1
+	;;
 fastboot) log "Phone in fastboot mode" ;;
 adb)
 	log "Phone in ADB mode, rebooting into the boot loader"
@@ -317,7 +431,7 @@ if [ $BOOT_STATUS -ne 0 ]; then
 fi
 
 log "Capturing $SERIAL for ${TIMEOUT}s..."
-sleep "$TIMEOUT"
+capture_wait "$TIMEOUT" || log "Capture ended early (--stop)"
 
 #
 # Reset into the boot loader, the capture goes on until the phone is back
@@ -333,10 +447,10 @@ if ! wait_back 30; then
 		log "No reset seen on $SERIAL after 30s, sending RST again..."
 		send_reset
 	fi
-	wait_back 90 || log "Warning: phone not back, reset it by hand"
+	wait_back 90 || { log "Error: phone not back, reset it by hand"; FAILED=1; }
 fi
 stop_capture
 
 summary
-exit
+exit $FAILED
 }

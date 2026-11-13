@@ -20,6 +20,8 @@ Genode directory:
 repos/pixel/tool/device_test <scenario> [seconds]   # build, boot, capture, reset
 repos/pixel/tool/device_test --capture [seconds] [name]
 repos/pixel/tool/device_test --reset
+repos/pixel/tool/device_test --stop                 # end the active run now (build, wait, or capture)
+repos/pixel/tool/device_test --flash-modem-b <image> # the phone image's modem_b, in fastboot
 ```
 
 `<scenario>` is a run script (`exynos_ufs_pixel` or `run/exynos_ufs_pixel`).
@@ -32,9 +34,15 @@ capturing until the phone is back.
 
 Rules:
 
-- **Nothing is flashed.** Only `fastboot boot`.
+- **Nothing is flashed** but `modem_b`, and only with `--flash-modem-b`
+  (Ivan, 2026-11-13). Boot images are always `fastboot boot`.
 - **The only reset is `RST` over the UART**, sent by the tool. No reboot
   component on the phone, no `REBOOT_S`, no watchdog tricks.
+- **End a useless run at once with `--stop`** (the UI did not come up, a
+  component is stuck, the user asks for a reset): the run then resets the
+  phone, waits until it is back in fastboot, and writes its log as at the
+  end of the capture time. Never kill `device_test` or send `--reset`
+  while a run is active: the reset then goes unrecorded.
 - Run one test at a time: the tool refuses while another run (lock in the
   log directory) or another reader of the serial device is active.
 - Variables of a run script come from the environment, e.g.
