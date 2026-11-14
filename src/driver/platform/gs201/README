@@ -13,3 +13,24 @@ the RTC of the S2MPG12 PMIC, which is behind the same firmware. The scenario
 'run/rtc_pixel' reads the time:
 
 ! make run/rtc_pixel KERNEL=hw BOARD=google_pixel7
+
+With the config attribute 'cpufreq', it sets the clocks of the three CPU
+clusters, which are DVFS domains of the same firmware: cluster 2 = CPUs
+0-3 (Cortex-A55, 300-1803 MHz), 3 = CPUs 4-5 (Cortex-A78, 400-2348 MHz),
+4 = CPUs 6-7 (Cortex-X1, 500-2850 MHz). The steps come from the firmware's
+frequency/voltage map. Requests arrive as ROM 'cpufreq_request'
+('cluster' nodes with 'id' and 'khz'); the driver clamps them to the limits,
+rounds up to a step, keeps cluster 2 at what the clocks of the others
+require, and raises cluster 2 before and lowers it after the others. The
+state is published as report 'cpufreq': per cluster 'id', 'khz',
+'min_khz', 'max_khz', 'temp_c' and its 'step' nodes, per CPU 'xpos',
+'khz', 'cluster', 'temp_c'. The temperatures of the three thermal zones
+are read every 'thermal_period_ms' (250); 'cpufreq_stats' logs the
+requests, rate changes and the time spent in them every 10 s. Without
+requests, the clocks
+stay as the boot loader left them. The policy, e.g. cpu_placer of
+genode-muesli, is another component.
+
+Host tests of the request planning and of the step tables:
+
+! make -C repos/pixel/src/driver/platform/gs201/test

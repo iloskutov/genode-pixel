@@ -25,6 +25,7 @@
 #include <pmu.h>
 #include <acpm.h>
 #include <rtc.h>
+#include <cpufreq.h>
 #include <common.h>
 
 namespace Driver { struct Main; };
@@ -48,6 +49,14 @@ struct Driver::Main
 	/* RTC of the PMIC, served as Rtc with the config attribute 'rtc' */
 	Constructible<Pmic_rtc> _rtc { };
 
+	/*
+	 * Rates of the CPU clusters from ROM 'cpufreq_request', state and
+	 * temperatures as report 'cpufreq', with the config attribute 'cpufreq'
+	 * ('thermal_period_ms' sets how often the temperatures are read,
+	 * 'cpufreq_stats' logs the cost of the rate changes every 10 s)
+	 */
+	Constructible<Cpufreq_driver> _cpufreq { };
+
 	Main(Genode::Env & env) : _env(env)
 	{
 		_config_rom.sigh(_config_handler);
@@ -64,6 +73,11 @@ void Driver::Main::_handle_config()
 
 	if (_config_rom.node().attribute_value("rtc", false) && !_rtc.constructed())
 		_rtc.construct(_env, _acpm);
+
+	if (_config_rom.node().attribute_value("cpufreq", false) && !_cpufreq.constructed())
+		_cpufreq.construct(_env, _acpm,
+		                   _config_rom.node().attribute_value("thermal_period_ms", 250u),
+		                   _config_rom.node().attribute_value("cpufreq_stats", false));
 }
 
 

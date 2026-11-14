@@ -1,16 +1,20 @@
 /*
- * \brief  Access to the PMICs of the GS201 via the ACPM firmware
+ * \brief  Access to the PMICs, the CPU clocks, and the temperatures of the
+ *         GS201 via the ACPM firmware
  * \author Ivan Loskutov
  * \date   2026-02-08
  *
  * The ACPM firmware runs on a Cortex-M core in the ALIVE domain and manages
- * all communication with the PMICs (S2MPG12 and S2MPG13). The application
- * processor accesses PMIC registers via ring buffers in a shared SRAM and a
- * mailbox as doorbell.
+ * all communication with the PMICs (S2MPG12 and S2MPG13), the voltages and
+ * PLLs of the DVFS domains, and the thermal sensors. The application
+ * processor talks to it via ring buffers in a shared SRAM and a mailbox as
+ * doorbell, one channel per service.
  *
  * The IPC protocol is taken from the vendor's Linux driver
  * drivers/soc/google/acpm/ (acpm_ipc.c, acpm_mfd.c), the PMIC registers from
- * include/linux/mfd/samsung/s2mpg12-register.h and s2mpg13-register.h
+ * include/linux/mfd/samsung/s2mpg12-register.h and s2mpg13-register.h, the
+ * DVFS commands from drivers/soc/google/cal-if/acpm_dvfs.c, the thermal
+ * commands from drivers/thermal/samsung/exynos_acpm_tmu.c
  * (google-modules/soc/gs).
  */
 
@@ -80,6 +84,27 @@ struct Driver::Acpm : private Noncopyable
 		ACPM_CMD_WORDS     = 4,
 
 		/*
+		 * DVFS channel ('acpm-ipc-channel = <0>' of acpm_dvfs in
+		 * gs201.dtsi), commands and domain ids of cal-if/acpm_dvfs.c
+		 */
+		ACPM_DVFS_IPC_CH   = 0,
+		DVFS_FREQ_REQ      = 0,
+		DVFS_FREQ_GET      = 1,
+		DVFS_CPUCL0        = 2,   /* CPUs 0-3, Cortex-A55 */
+		DVFS_CPUCL1        = 3,   /* CPUs 4-5, Cortex-A78 */
+		DVFS_CPUCL2        = 4,   /* CPUs 6-7, Cortex-X1  */
+
+		/*
+		 * Thermal channel ('acpm_tmu' in gs201.dtsi), request type and
+		 * zone ids of thermal/samsung/exynos_acpm_tmu.h and gs201-b0.dts
+		 */
+		ACPM_TMU_IPC_CH    = 9,
+		TMU_IPC_READ_TEMP  = 0x02,
+		TMU_ZONE_BIG       = 0,   /* CPUs 6-7 */
+		TMU_ZONE_MID       = 1,   /* CPUs 4-5 */
+		TMU_ZONE_LITTLE    = 2,   /* CPUs 0-3 */
+
+		/*
 		 * Number of times the receive queue is polled for the response to
 		 * a command. It is a bound for the busy waiting, not a time: a
 		 * firmware that does not answer must not block the driver forever.
@@ -134,11 +159,31 @@ struct Driver::Acpm : private Noncopyable
 	};
 
 	Ipc_channel _pmic_ch { };
+	Ipc_channel _dvfs_ch { };
+	Ipc_channel _tmu_ch  { };
 	uint8_t     _seq = ACPM_SEQ_NUM_FIRST;
 
 	uint32_t _sram_read32(unsigned off)
 	{
 		return Hw::mmio_read<uint32_t>(_sram_base + off);
+	}
+
+	/*
+	 * Reads of the firmware's data within the SRAM, 0 outside of it
+	 */
+	uint32_t sram_read32(unsigned off)
+	{
+		return (off + 4 <= SRAM_SIZE) ? _sram_read32(off) : 0;
+	}
+
+	uint16_t sram_read16(unsigned off)
+	{
+		return (off + 2 <= SRAM_SIZE) ? Hw::mmio_read<uint16_t>(_sram_base + off) : 0;
+	}
+
+	uint8_t sram_read8(unsigned off)
+	{
+		return (off + 1 <= SRAM_SIZE) ? Hw::mmio_read<uint8_t>(_sram_base + off) : 0;
 	}
 
 	void _mbox_write(unsigned off, uint32_t val)
@@ -159,11 +204,14 @@ struct Driver::Acpm : private Noncopyable
 		for (unsigned i = 0; i < num_channels; i++) {
 
 			unsigned const ch_off = channels_off + i*IPC_CH_SIZE;
+			unsigned const id     = _sram_read32(ch_off + IPC_CH_ID);
 
-			if (_sram_read32(ch_off + IPC_CH_ID) != ACPM_PMIC_IPC_CH)
+			if (id != ACPM_PMIC_IPC_CH && id != ACPM_DVFS_IPC_CH
+			 && id != ACPM_TMU_IPC_CH)
 				continue;
 
-			Ipc_channel &ch = _pmic_ch;
+			Ipc_channel &ch = (id == ACPM_PMIC_IPC_CH) ? _pmic_ch
+			                : (id == ACPM_DVFS_IPC_CH) ? _dvfs_ch : _tmu_ch;
 
 			/* the firmware's receive queue is our transmit queue */
 			ch.tx_front    = _sram_base + _sram_read32(ch_off + IPC_CH_RX_FRONT);
@@ -176,18 +224,21 @@ struct Driver::Acpm : private Noncopyable
 
 			ch.q_len       = _sram_read32(ch_off + IPC_CH_Q_LEN);
 			ch.q_elem_size = _sram_read32(ch_off + IPC_CH_Q_ELEM_SZ);
-			ch.id          = ACPM_PMIC_IPC_CH;
-			ch.valid       = true;
-			return;
+			ch.id          = id;
+			ch.valid       = ch.q_len > 0;
 		}
 
-		Genode::error("ACPM firmware provides no PMIC channel");
+		if (!_pmic_ch.valid)
+			Genode::error("ACPM firmware provides no PMIC channel");
 	}
 
 	/**
 	 * Send a command and wait for its response, which replaces 'cmd'
+	 *
+	 * \param response  false for a command the firmware does not answer
 	 */
-	bool _send(Ipc_channel const &ch, uint32_t cmd[ACPM_CMD_WORDS])
+	bool _send(Ipc_channel const &ch, uint32_t cmd[ACPM_CMD_WORDS],
+	           bool const response = true)
 	{
 		if (!ch.valid) return false;
 
@@ -214,6 +265,9 @@ struct Driver::Acpm : private Noncopyable
 
 		write32(ch.tx_front, next);
 		_mbox_write(MBOX_INTGR1, 1u << ch.id);
+
+		if (!response)
+			return true;
 
 		for (unsigned poll = 0; poll < MAX_RESPONSE_POLLS; poll++) {
 
@@ -248,6 +302,53 @@ struct Driver::Acpm : private Noncopyable
 		}
 
 		return false;
+	}
+
+	bool dvfs_available() const { return _dvfs_ch.valid; }
+	bool tmu_available()  const { return _tmu_ch.valid; }
+
+	/**
+	 * Current rate of a DVFS domain in kHz as the firmware knows it, 0 if
+	 * the request failed
+	 */
+	uint32_t dvfs_rate(unsigned domain)
+	{
+		uint32_t cmd[ACPM_CMD_WORDS] = { domain, 0, DVFS_FREQ_GET,
+		                                 (uint32_t)_timer.elapsed_ms() };
+
+		return _send(_dvfs_ch, cmd) ? cmd[1] : 0;
+	}
+
+	/**
+	 * Ask the firmware to set the rate of a DVFS domain, it does not answer
+	 * for the CPU clusters
+	 *
+	 * \return false if the channel's queue is full
+	 */
+	bool dvfs_request(unsigned domain, uint32_t khz)
+	{
+		uint32_t cmd[ACPM_CMD_WORDS] = { domain, khz, DVFS_FREQ_REQ,
+		                                 (uint32_t)_timer.elapsed_ms() };
+
+		return _send(_dvfs_ch, cmd, false);
+	}
+
+	struct Tmu_reading { bool ok; int ret; unsigned temp_c; };
+
+	/**
+	 * Temperature of a thermal zone as the firmware measures it
+	 *
+	 * Request: word 1 = type | zone << 16. Reply: word 1 = type | ret << 8 |
+	 * zone << 16 | temperature << 24 (degrees Celsius).
+	 */
+	Tmu_reading tmu_temp(unsigned zone)
+	{
+		uint32_t cmd[ACPM_CMD_WORDS] = { 0, TMU_IPC_READ_TEMP | (zone << 16), 0, 0 };
+
+		if (!_send(_tmu_ch, cmd))
+			return { false, 0, 0 };
+
+		return { true, (int)(int8_t)((cmd[1] >> 8) & 0xff), (cmd[1] >> 24) & 0xff };
 	}
 
 	/**
