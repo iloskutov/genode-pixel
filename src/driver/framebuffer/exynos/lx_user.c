@@ -332,13 +332,27 @@ static int client_task_func(void *data)
 
 			power_pending = false;
 			if (display_on_requested != display_on) {
+				/*
+				 * 50 ms after the last frame the DECON hibernates: it is
+				 * off, the panel refreshes the last frame itself. A DPMS
+				 * off in that state left the panel showing that frame (seen
+				 * on the phone at the lock screen's idle timeout). A commit
+				 * first brings the DECON out of hibernation.
+				 */
+				if (!display_on_requested) {
+					ret = drm_client_modeset_commit(&client);
+					if (ret)
+						printk("genode_fb: commit before dpms off failed: %d\n", ret);
+				}
 				ret = drm_client_modeset_dpms(&client, display_on_requested
 				                              ? DRM_MODE_DPMS_ON : DRM_MODE_DPMS_OFF);
 				if (ret)
 					printk("genode_fb: dpms %s failed: %d\n",
 					       display_on_requested ? "on" : "off", ret);
-				else
+				else {
 					display_on = display_on_requested;
+					printk("genode_fb: display %s\n", display_on ? "on" : "off");
+				}
 
 				/* capture again after switching on */
 				unchanged = 0;
