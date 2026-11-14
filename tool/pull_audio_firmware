@@ -11,9 +11,11 @@
 # its tuning) as ROM modules, which the run scenarios take from a tar
 # archive. The run scenarios also take the vendor's mixer paths
 # ('mixer_paths.xml', the control values of Android's audio routes) from
-# it, to generate the configuration of the driver. The files are not part
-# of Genode. This tool copies them via adb from the phone's
-# '/vendor/firmware' and '/vendor/etc' and packs them into the archive.
+# it, to generate the configuration of the driver, and the parameters of
+# the voice processor ('HANDSET.dat'), to generate the voice tuning of a
+# call ('voice_tuning_from_vendor'). The files are not part of Genode.
+# This tool copies them via adb from the phone's '/vendor/firmware' and
+# '/vendor/etc' and packs them into the archive.
 #
 # usage: pull_audio_firmware [<archive>]
 #
@@ -31,7 +33,8 @@ FILES="/vendor/firmware/aoc.bin \
        /vendor/firmware/cs35l41-dsp1-spk-prot.wmfw \
        /vendor/firmware/cs35l41-dsp1-spk-prot.bin \
        /vendor/firmware/R-cs35l41-dsp1-spk-prot.bin \
-       /vendor/etc/mixer_paths.xml"
+       /vendor/etc/mixer_paths.xml \
+       /vendor/etc/aoc/HANDSET.dat"
 
 GENODE_DIR=$(cd "$(dirname "$0")/../../.." && pwd)
 

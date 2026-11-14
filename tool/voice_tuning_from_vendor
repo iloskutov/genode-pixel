@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+#
+# \brief  Voice tuning of a call from the vendor's Fortemedia parameter file
+# \author Ivan Loskutov
+# \date   2026-11-14
+#
+# SPDX-License-Identifier: MIT
+#
+"""Build the voice tuning of a call from the vendor's parameter file.
+
+    voice_tuning_from_vendor <HANDSET.dat> <out_dir> [--rate 16000]
+                             [--mics 2] [--set handset]
+
+The AoC's voice processor (Fortemedia) mutes a call until it got its
+configuration. At the start of a call, Android's audio HAL uploads four
+blocks to it ('audio_bulk_tx', each announced by a
+CMD_AUDIO_OUTPUT_SET_PARAMETER_BULK on 'audio_output_tuning'), which the
+audio driver replays from the ROM modules 'voice_tuning.<set>.<n>'. This
+tool writes these files from the vendor's '/vendor/etc/aoc/HANDSET.dat',
+as the HAL builds the blocks ('audio_fortemedia_aoc.so',
+'libfvsam_prm_parser.so', 'audio.platform.aoc.so'):
+
+  0  voice process info, 36 bytes: u16 0, u16 36, u32 16, u32 24,
+     u32 ~0, u16 ~0, u16 <rate>, u32 ~0, u16 <microphones>,
+     u16 <downlink channels>, u32 ~0, u16 <downlink channels>, u16 0
+  1  u16 2, u16 12 + n, u32 16 (key-value parameters), u32 n, and the
+     n bytes of the transmit parameters
+  2  the same for the receive parameters
+  3  u16 0, u16 20 + n, u32 17 (volume table), u32 8 + n, u32 <levels>,
+     u32 <parameters per level>, and the n bytes of the volume table
+
+The parameter file is a sequence of tokens "FV_SAM" + u16 pattern:
+
+  ffff  version          fefe  customer (u16 id, u32 length)
+  f0f0  group: u8 device, u8 condition, u16 length of its records
+  f1f1  record: u8 id, u8 volume levels, u16 bytes per level,
+        u16 parameter bytes, u16 length; the parameters follow, then
+        the volume table
+
+A record id is <rate index> * 4 + <direction> (rate index 0..3 for 8,
+16, 32, 48 kHz; direction 0 transmit, 1 and 2 the two receive channels).
+An earpiece call (one downlink channel) takes device 0, condition 0 and
+the records of its rate.
+
+The files are proprietary data of the device vendor: never commit them.
+"""
+
+import argparse, os, struct, sys
+
+RATES = { 8000: 0, 16000: 1, 32000: 2, 48000: 3 }
+PARAM_ID_KV, PARAM_ID_VOLUME = 16, 17
+
+
+def records(data, device, condition):
+    """dict record id -> (levels, level bytes, params, volume table)"""
+    result = {}
+    group = None
+    pos = data.find(b'FV_SAM')
+    while 0 <= pos < len(data):
+        if pos + 8 > len(data):
+            sys.exit(f'token at offset {pos} is cut off')
+        pattern, = struct.unpack_from('<H', data, pos + 6)
+        if pattern == 0xf0f0:
+            if pos + 12 > len(data):
+                sys.exit(f'group at offset {pos} is cut off')
+            group = (data[pos + 8], data[pos + 9])
+            pos += 12
+        elif pattern == 0xf1f1:
+            if pos + 16 > len(data):
+                sys.exit(f'record at offset {pos} is cut off')
+            rid, levels, level_bytes, param_bytes, length = \
+                struct.unpack_from('<BBHHH', data, pos + 8)
+            if pos + 16 + length > len(data):
+                sys.exit(f'record at offset {pos} exceeds the file')
+            if param_bytes + levels * level_bytes != length or level_bytes % 4:
+                sys.exit(f'record at offset {pos}: {param_bytes} parameter bytes and '
+                         f'{levels} levels of {level_bytes} bytes do not make {length} bytes')
+            body = data[pos + 16 : pos + 16 + length]
+            if group == (device, condition) and rid not in result:
+                result[rid] = (levels, level_bytes, body[:param_bytes],
+                               body[param_bytes : param_bytes + levels * level_bytes])
+            pos += 16 + length
+        else:
+            pos += 8
+        pos = data.find(b'FV_SAM', pos)
+    return result
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description='Voice tuning of a call from the vendor parameter file')
+    ap.add_argument('dat', help='/vendor/etc/aoc/HANDSET.dat')
+    ap.add_argument('out_dir')
+    ap.add_argument('--rate', type=int, default=16000, choices=sorted(RATES))
+    ap.add_argument('--mics', type=int, default=2)
+    ap.add_argument('--set', default='handset')
+    args = ap.parse_args()
+
+    data = open(args.dat, 'rb').read()
+    if not data.startswith(b'FV_SAM'):
+        sys.exit(f'{args.dat}: not a Fortemedia parameter file')
+
+    recs = records(data, device=0, condition=0)
+    tx_id = RATES[args.rate] * 4
+    rx_id = tx_id + 1
+    if tx_id not in recs or rx_id not in recs:
+        sys.exit(f'{args.dat}: no parameters for {args.rate} Hz')
+
+    _, _, tx, _ = recs[tx_id]
+    levels, level_bytes, rx, volume = recs[rx_id]
+    dl_channels = 1
+
+    # the lengths are 16-bit fields of the blocks' headers
+    if max(len(tx), len(rx)) + 12 > 0xffff or len(volume) + 20 > 0xffff:
+        sys.exit(f'{args.dat}: parameters too large for a block')
+
+    blocks = [
+        struct.pack('<HHIIIHHIHHIHH', 0, 36, 16, 24, 0xffffffff, 0xffff, args.rate,
+                    0xffffffff, args.mics, dl_channels, 0xffffffff, dl_channels, 0),
+        struct.pack('<HHII', 2, 12 + len(tx), PARAM_ID_KV, len(tx)) + tx,
+        struct.pack('<HHII', 2, 12 + len(rx), PARAM_ID_KV, len(rx)) + rx,
+        struct.pack('<HHIIII', 0, 20 + len(volume), PARAM_ID_VOLUME, 8 + len(volume),
+                    levels, level_bytes // 4) + volume,
+    ]
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    for n, block in enumerate(blocks):
+        path = os.path.join(args.out_dir, f'voice_tuning.{args.set}.{n}')
+        with open(path, 'wb') as f:
+            f.write(block)
+        print(f'{path}: {len(block)} bytes')
+
+
+if __name__ == '__main__':
+    main()
