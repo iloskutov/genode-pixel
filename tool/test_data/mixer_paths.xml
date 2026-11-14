@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<!--
+  Fixture of tool/test_mixer_paths_to_hid.py: the syntax of an Android
+  audio_route mixer_paths.xml with invented content. Not a vendor file.
+-->
+<mixer>
+    <!-- initial values (top-level ctl elements) -->
+    <ctl name="Out Format" value="S32_LE"/>
+    <ctl name="Top Amp Switch" value="0"/>
+    <ctl name="Bottom Amp Switch" value="0"/>
+    <ctl name="Top Amp Current Limit" value="3.50A"/>
+    <ctl name="Mic Gain At High Power (cB)" value="0" />
+    <ctl name="Mic List" id="0" value="-1"/>
+    <ctl name="Mic List" id="1" value="-1"/>
+    <ctl name="Mic List" id="2" value="-1"/>
+    <ctl name="Tone Biquad0" id="0" value="0"/>
+    <ctl name="Tone Biquad0" id="1" value="0"/>
+    <ctl name="Tone Enable" value="0"/>
+    <ctl name="OUT Mixer EP2" value="0"/>
+    <ctl name="OUT Mixer EP5" value="0"/>
+    <!-- a repeated initial value: the last one counts -->
+    <ctl name="Out Format" value="S16_LE"/>
+
+    <!-- a path whose name contains a space -->
+    <path name="tone-for handset">
+        <!-- 1065353216 = 0x3f800000 = 1.0 -->
+        <ctl name="Tone Biquad0" id="0" value="1065353216"/>
+        <ctl name="Tone Biquad0" id="1" value="1065353216"/>
+        <ctl name="Tone Enable" value="1"/>
+    </path>
+
+    <path name="media-playbackP">
+        <ctl name="OUT Mixer EP2" value="1"/>
+    </path>
+
+    <path name="media-playbackP nothing">
+    </path>
+
+    <!-- stray '>' as character data, as found in real files -->>
+    <path name="handset">
+        <ctl name="Top Amp Current Limit" value="2.50A"/>
+        <ctl name="Top Amp Switch" value="1"/>
+    </path>
+
+    <path name="speaker">
+        <ctl name="Top Amp Switch" value="1"/>
+    <!--<ctl name="Commented Out" value="7"/>-->
+        <ctl name="Bottom Amp Switch" value="1"/>
+    </path>
+
+    <path name="speaker-post">
+        <ctl name="Top Amp Delta File" value="delta_3.txt" />
+        <ctl name="Bottom Amp Switch" value="0"/>
+    </path>
+
+    <!-- nested references are flattened in order -->
+    <path name="dual-speaker">
+        <path name="speaker" />
+        <path name="speaker-post" />
+        <ctl name="Top Amp Switch" value="0"/>
+    </path>
+
+    <path name="handset-mic">
+        <ctl name="Mic List" id="0" value="0"/>
+        <ctl name="Mic List" id="1" value="2"/>
+        <ctl name="Mic List" id="2" value="-1"/>
+        <ctl name="Mic Gain At High Power (cB)" value="130"/>
+    </path>
+
+    <!-- a second definition of an existing name is dropped -->
+    <path name="handset">
+        <ctl name="Top Amp Switch" value="0"/>
+        <ctl name="Never Seen" value="1"/>
+    </path>
+</mixer>
