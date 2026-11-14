@@ -27,7 +27,7 @@ proc modem_stack_targets { } {
 		driver/ufs/exynos
 		server/part_block
 		server/vfs
-		lib/vfs lib/vfs_ext4 lib/vfs_import
+		lib/vfs lib/vfs_ext4 lib/vfs_import lib/vfs_jitterentropy
 		lib/libc lib/libm lib/posix lib/stdcxx lib/sandbox
 		driver/modem/pixel
 	}
@@ -39,7 +39,7 @@ proc modem_stack_targets { } {
 # versions below (README of 'goa-packages')
 #
 proc modem_stack_import { } {
-	import_from_depot iloskutov_pixel7/src/android_loader/2026-11-07 \
+	import_from_depot iloskutov_pixel7/src/android_loader/2026-11-14 \
 	                  iloskutov_pixel7/src/android_prop/2026-11-07 \
 	                  iloskutov_pixel7/src/android_binder/2026-11-07 \
 	                  iloskutov_pixel7/src/modem_orchestrator/2026-11-07 \
@@ -299,13 +299,15 @@ proc modem_stack_start_nodes { fw_version ril_log_level pixel_modem_config } {
                       + rom imei2
           + dir proc | + rom cmdline
           + dir data | + fs
-          + dir dev  | + log
+          + dir dev
+            + log
+            + jitterentropy random
           + import
             + dir mnt
               + dir vendor
                 + dir modem_userdata
                   + dir replay | + rom dds.bin
-        + libc | stdout: /dev/log | stderr: /dev/log | cwd: /
+        + libc | stdout: /dev/log | stderr: /dev/log | rng: /dev/random | cwd: /
     + template | service: ril-daemon | caps: 1000 | ram: 200M
       + provides | + service Android_binder
       + loader | object_map: yes | log_level: } $ril_log_level {
@@ -320,13 +322,14 @@ proc modem_stack_start_nodes { fw_version ril_log_level pixel_modem_config } {
           + dir data | + fs
           + dir dev
             + log
+            + jitterentropy random
             + inline rtc | : 2026-11-07 12:00
           + import
             + dir data
               + dir vendor
                 + dir rild  | + inline .keep | : keep
                 + dir radio | + inline .keep | : keep
-        + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc | cwd: /
+        + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc | rng: /dev/random | cwd: /
     + template | service: RFS-daemon | caps: 600 | ram: 200M
       + loader
         + env | value: ANDROID_ROOT=/system
@@ -343,11 +346,12 @@ proc modem_stack_start_nodes { fw_version ril_log_level pixel_modem_config } {
               + dir efs | + fs | label: efs -> /
           + dir dev
             + log
+            + jitterentropy random
             + inline rtc | : 2026-11-07 12:00
           + dir data | + fs
           + import
             + dir data | + dir vendor | + dir log | + dir rfsd | + inline .keep | : keep
-        + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc | cwd: /
+        + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc | rng: /dev/random | cwd: /
     + template | service: init.shared_modem_platform | caps: 600 | ram: 200M
       + loader
         + env | value: ANDROID_ROOT=/system
@@ -366,6 +370,7 @@ proc modem_stack_start_nodes { fw_version ril_log_level pixel_modem_config } {
           + dir data | + fs
           + dir dev
             + log
+            + jitterentropy random
             + inline rtc | : 2026-11-07 12:00
           + import
             + dir data | + dir vendor | + dir radio | + inline .keep | : keep
@@ -373,7 +378,7 @@ proc modem_stack_start_nodes { fw_version ril_log_level pixel_modem_config } {
               + dir vendor
                 + dir modem_userdata
                   + dir replay | + inline .keep | : keep
-        + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc | cwd: /
+        + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc | rng: /dev/random | cwd: /
     + vfs
       + dir data | + fs
       + dir dev  | + log

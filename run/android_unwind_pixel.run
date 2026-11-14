@@ -26,12 +26,12 @@ if {![file isfile $vendor_tar]} {
 
 build {
 	core init lib/ld timer
-	lib/vfs lib/libc lib/libm lib/posix lib/stdcxx
+	lib/vfs lib/vfs_jitterentropy lib/libc lib/libm lib/posix lib/stdcxx
 }
 
 create_boot_directory
 
-import_from_depot iloskutov_pixel7/src/android_loader/2026-11-07 \
+import_from_depot iloskutov_pixel7/src/android_loader/2026-11-14 \
                   iloskutov_pixel7/src/android_prop/2026-11-07 \
                   iloskutov_pixel7/src/android_binder/2026-11-07 \
                   iloskutov_pixel7/src/test-android_unwind/2026-11-08
@@ -67,8 +67,10 @@ config
   + config | program: /system/bin/test-android_unwind
     + vfs
       + tar android.tar
-      + dir dev | + log
-    + libc | stdout: /dev/log | stderr: /dev/log
+      + dir dev
+        + log
+        + jitterentropy random
+    + libc | stdout: /dev/log | stderr: /dev/log | rng: /dev/random
   + route
     + service Timer | + child timer
     + any-service   | + parent

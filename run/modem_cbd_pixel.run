@@ -45,14 +45,14 @@ build {
 	driver/ufs/exynos
 	server/part_block
 	server/vfs
-	lib/vfs lib/vfs_ext4 lib/vfs_import
+	lib/vfs lib/vfs_ext4 lib/vfs_import lib/vfs_jitterentropy
 	lib/libc lib/libm lib/posix lib/stdcxx
 	driver/modem/pixel
 }
 
 create_boot_directory
 
-import_from_depot iloskutov_pixel7/src/android_loader/2026-11-07 \
+import_from_depot iloskutov_pixel7/src/android_loader/2026-11-14 \
                   iloskutov_pixel7/src/android_prop/2026-11-07 \
                   iloskutov_pixel7/src/android_binder/2026-11-07
 
@@ -194,14 +194,16 @@ config
                   + rom imei2
       + dir proc | + rom cmdline
       + dir data | + ram
-      + dir dev  | + log
+      + dir dev
+        + log
+        + jitterentropy random
       + import
         + dir data | + dir vendor | + inline .keep | : keep
         + dir mnt
           + dir vendor
             + dir modem_userdata
               + dir replay | + rom dds.bin
-    + libc | stdout: /dev/log | stderr: /dev/log | cwd: /
+    + libc | stdout: /dev/log | stderr: /dev/log | rng: /dev/random | cwd: /
   + route
     + service File_system      | + child vfs
     + service Android_chardev  | + child pixel_modem
