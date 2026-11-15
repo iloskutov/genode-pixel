@@ -47,10 +47,10 @@ proc run_image { } {
 	exec [cross_dev_prefix]objcopy -O binary $elf_img $bin_img
 
 	#
-	# Pad binary to 8-byte alignment (required by trampoline copy loop)
+	# Pad binary to 64-byte alignment (required by trampoline copy loop)
 	#
 	set genode_size [file size $bin_img]
-	set aligned_size [expr {($genode_size + 7) & ~7}]
+	set aligned_size [expr {($genode_size + 63) & ~63}]
 	if {$genode_size != $aligned_size} {
 		set pad [expr {$aligned_size - $genode_size}]
 		exec dd if=/dev/zero bs=1 count=$pad >> $bin_img 2>/dev/null
@@ -59,14 +59,26 @@ proc run_image { } {
 	#
 	# Build trampoline
 	#
-	set tramp_obj [file join [run_dir] boot trampoline.o]
+	set tramp_obj  [file join [run_dir] boot trampoline.o]
+	set splash_obj [file join [run_dir] boot splash.o]
 	set tramp_elf [file join [run_dir] boot trampoline.elf]
 	set tramp_bin [file join [run_dir] boot trampoline.bin]
 
 	exec [cross_dev_prefix]as [file join $boot_img_dir trampoline.S] \
 	     -o $tramp_obj
+	#
+	# The boot splash runs in stage 2, at another address than it is linked
+	# to: only PC-relative addresses (tiny code model), no jump tables, no
+	# library calls
+	#
+	exec [cross_dev_prefix]gcc -O2 -std=c11 -Wall -Werror \
+	     -ffreestanding -fno-builtin -nostdlib -mgeneral-regs-only \
+	     -mcmodel=tiny -fno-pic -fno-pie -fno-jump-tables \
+	     -fno-stack-protector -fno-asynchronous-unwind-tables \
+	     -fno-tree-loop-distribute-patterns \
+	     -c [file join $boot_img_dir splash.c] -o $splash_obj
 	exec [cross_dev_prefix]ld -T [file join $boot_img_dir trampoline.ld] \
-	     $tramp_obj -o $tramp_elf
+	     $tramp_obj $splash_obj -o $tramp_elf
 	exec [cross_dev_prefix]objcopy -O binary $tramp_elf $tramp_bin
 
 	#
@@ -74,14 +86,33 @@ proc run_image { } {
 	#
 	set kernel_bin [file join [run_dir] boot kernel.bin]
 
-	exec $python3 - $tramp_bin $bin_img $kernel_bin $entrypoint << {
+	exec $python3 - $tramp_bin $bin_img $kernel_bin $entrypoint $elf_img << {
 import struct, sys
 
-tramp_path, genode_path, kernel_path, entry_str = sys.argv[1:5]
+tramp_path, genode_path, kernel_path, entry_str, elf_path = sys.argv[1:6]
 
 tramp  = bytearray(open(tramp_path, 'rb').read())
 genode = open(genode_path, 'rb').read()
 entry  = int(entry_str, 0)
+
+# The flat binary starts at the lowest physical address of a loaded segment
+elf = open(elf_path, 'rb').read()
+phoff, = struct.unpack_from('<Q', elf, 0x20)
+phentsize, phnum = struct.unpack_from('<HH', elf, 0x36)
+dest = min(paddr for p_type, paddr, filesz in
+           (struct.unpack_from('<I', elf, phoff + i * phentsize) +
+            struct.unpack_from('<Q', elf, phoff + i * phentsize + 0x18) +
+            struct.unpack_from('<Q', elf, phoff + i * phentsize + 0x20)
+            for i in range(phnum))
+           if p_type == 1 and filesz > 0)
+
+# Patch _genode_dest sentinel (0xD0D0CACAD0D0CACA)
+dest_sentinel = struct.pack('<Q', 0xD0D0CACAD0D0CACA)
+idx = tramp.find(dest_sentinel)
+if idx < 0:
+    print("Error: destination sentinel not found in trampoline", file=sys.stderr)
+    sys.exit(1)
+tramp[idx:idx+8] = struct.pack('<Q', dest)
 
 # Patch _genode_size sentinel (0xDEADBEEFCAFEBABE)
 size_sentinel = struct.pack('<Q', 0xDEADBEEFCAFEBABE)
@@ -130,7 +161,7 @@ with open(kernel_path, 'wb') as f:
 	#
 	# Clean up intermediate files
 	#
-	exec rm -f $bin_img $tramp_obj $tramp_elf $tramp_bin $kernel_bin
+	exec rm -f $bin_img $tramp_obj $splash_obj $tramp_elf $tramp_bin $kernel_bin
 
 	exec mv $boot_img [run_dir].img
 

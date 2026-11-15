@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+#
+# \brief  Build the init_boot image with the boot splash
+# \author Ivan Loskutov
+# \date   2026-11-15
+#
+# SPDX-License-Identifier: MIT
+#
+#   mk_splash <band.png> <out.img> [<background RRGGBB>]
+#
+# The trampoline (tool/boot_img/splash.c) shows the last ramdisk that the
+# boot loader loads, the one of the init_boot partition of the active
+# slot. Its format is fixed there: the band of 1080 x 800 pixels for the
+# middle third of the screen, 0x00RRGGBB little endian, row by row, then
+# the colour of the rest of the screen (default black), then the 8 bytes
+# "MuesliOS". The PNG (8-bit RGB or RGBA, not interlaced, e.g. from
+# mk_splash_png) must have exactly the band's size; alpha is blended on
+# black. The image goes to the partition with
+#
+#   fastboot flash init_boot_b <out.img>
+#
+
+import os, struct, subprocess, sys, zlib
+
+WIDTH, HEIGHT = 1080, 800
+MAGIC = b'MuesliOS'
+
+
+def decode_png(path):
+	data = open(path, 'rb').read()
+	if data[:8] != b'\x89PNG\r\n\x1a\n':
+		sys.exit('not a PNG: ' + path)
+	pos, idat, hdr = 8, b'', None
+	while pos < len(data):
+		length, kind = struct.unpack('>I4s', data[pos:pos + 8])
+		body = data[pos + 8:pos + 8 + length]
+		pos += 12 + length
+		if kind == b'IHDR':
+			hdr = struct.unpack('>IIBBBBB', body)
+		elif kind == b'IDAT':
+			idat += body
+		elif kind == b'IEND':
+			break
+	w, h, depth, ctype, _, _, interlace = hdr
+	if depth != 8 or ctype not in (2, 6) or interlace:
+		sys.exit('need 8-bit RGB/RGBA non-interlaced')
+	bpp = 4 if ctype == 6 else 3
+	raw, stride = zlib.decompress(idat), w * bpp
+	rows, prev, i = [], bytearray(stride), 0
+	for _ in range(h):
+		f, line = raw[i], bytearray(raw[i + 1:i + 1 + stride])
+		i += 1 + stride
+		for x in range(stride):
+			a = line[x - bpp] if x >= bpp else 0
+			b = prev[x]
+			c = prev[x - bpp] if x >= bpp else 0
+			if f == 1:   line[x] = (line[x] + a) & 0xff
+			elif f == 2: line[x] = (line[x] + b) & 0xff
+			elif f == 3: line[x] = (line[x] + (a + b) // 2) & 0xff
+			elif f == 4:
+				p = a + b - c
+				pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+				pr = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+				line[x] = (line[x] + pr) & 0xff
+		rows.append(line)
+		prev = line
+	return w, h, bpp, rows
+
+
+if len(sys.argv) not in (3, 4):
+	sys.exit('usage: mk_splash <band.png> <out.img> [<background RRGGBB>]')
+
+png, out = sys.argv[1], sys.argv[2]
+background = int(sys.argv[3], 16) if len(sys.argv) == 4 else 0
+
+w, h, bpp, rows = decode_png(png)
+if (w, h) != (WIDTH, HEIGHT):
+	sys.exit('%s is %dx%d, the band is %dx%d' % (png, w, h, WIDTH, HEIGHT))
+
+pixels = bytearray()
+for line in rows:
+	for x in range(w):
+		r, g, b = line[x * bpp:x * bpp + 3]
+		if bpp == 4:
+			a = line[x * bpp + 3]
+			r, g, b = (r * a // 255, g * a // 255, b * a // 255)
+		pixels += struct.pack('<I', r << 16 | g << 8 | b)
+
+ramdisk = out + '.ramdisk'
+with open(ramdisk, 'wb') as f:
+	f.write(pixels + struct.pack('<I', background & 0xffffff) + MAGIC)
+
+genode_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          '..', '..', '..', '..')
+tools = subprocess.check_output([os.path.join(genode_dir, 'tool', 'ports', 'current'),
+                                 'android_boot_tools'], text=True).strip()
+subprocess.check_call([sys.executable, os.path.join(tools, 'mkbootimg', 'mkbootimg.py'),
+                       '--header_version', '4', '--ramdisk', ramdisk, '-o', out])
+os.remove(ramdisk)
+print(out, os.path.getsize(out), 'bytes')

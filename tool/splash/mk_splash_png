@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+#
+# \brief  Render the band of the boot splash as a PNG (development time)
+# \author Ivan Loskutov
+# \date   2026-11-15
+#
+# SPDX-License-Identifier: MIT
+#
+#   mk_splash_png [<font.ttf>] <out.png>
+#
+# Two centred lines on black, 1080 x 800, the band in the middle third of
+# the screen (see tool/boot_img/splash.c): "MüesliOS" large and white,
+# "powered by Genode OS Framework" smaller and grey. The font defaults to
+# Noto Sans Light. Needs PIL; the PNG is committed (splash.png), and
+# mk_splash turns it into the init_boot image.
+#
+
+import sys
+from PIL import Image, ImageDraw, ImageFont
+
+WIDTH, HEIGHT = 1080, 800
+
+LINES = [  # text, size in pixels, colour
+	('MüesliOS',                       180, (255, 255, 255)),
+	('powered by Genode OS Framework',  46, (190, 190, 190)),
+]
+GAP = 52  # pixels between the lines
+
+if len(sys.argv) not in (2, 3):
+	sys.exit('usage: mk_splash_png [<font.ttf>] <out.png>')
+
+font_path = sys.argv[1] if len(sys.argv) == 3 else \
+            '/usr/share/fonts/noto/NotoSans-Light.ttf'
+
+lines = []
+for text, size, colour in LINES:
+	font = ImageFont.truetype(font_path, size)
+	box  = font.getbbox(text)
+	lines.append((text, font, colour, box))
+
+height = sum(box[3] - box[1] for _, _, _, box in lines) + GAP * (len(lines) - 1)
+
+img  = Image.new('RGB', (WIDTH, HEIGHT), 'black')
+draw = ImageDraw.Draw(img)
+y    = (HEIGHT - height) // 2
+for text, font, colour, box in lines:
+	w, h = box[2] - box[0], box[3] - box[1]
+	draw.text(((WIDTH - w) // 2 - box[0], y - box[1]), text, font=font, fill=colour)
+	y += h + GAP
+
+img.save(sys.argv[-1])
