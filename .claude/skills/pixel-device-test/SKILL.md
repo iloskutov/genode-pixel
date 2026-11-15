@@ -71,6 +71,7 @@ newest:
 | `serial.NN.boot_loader.log` | boot loader of boot NN |
 | `serial.NN.genode.log` | Genode started by boot NN |
 | `serial.NN.other_os.log` | another OS of boot NN (Android after the reset) |
+| `logcat.log` | `adb logcat` of an image with adb (the muesli demos: phone, lock screen); there the UART has only errors, core and the kernel |
 
 `tool/split_serial_log [--running] <capture>.log` does the split; use it on
 any capture the user sends.

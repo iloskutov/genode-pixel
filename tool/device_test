@@ -53,6 +53,13 @@
 #   build.log         output of make
 #   serial.log        the serial capture, unchanged
 #   serial.NN.*.log   the capture split per boot (tool/split_serial_log)
+#   logcat.log        'adb logcat' of an image with adb (serial number
+#                     G-genode, e.g. the demos of repos/muesli), empty
+#                     without; each connection starts with a line "---"
+#
+# adb runs with its native USB back end (ADB_LIBUSB=0), which the PC's adb 35
+# needs to see the image's adb. The tool restarts the adb server for that
+# when it boots an image.
 #
 # Environment:
 #
@@ -101,6 +108,7 @@ else
 fi
 BAUD=115200
 
+export ADB_LIBUSB=0
 ADB=(adb)
 FASTBOOT=(fastboot)
 if [ -n "${PHONE_SERIAL:-}" ]; then
@@ -186,7 +194,13 @@ in_fastboot()
 	fi
 }
 
-in_adb() { "${ADB[@]}" get-state 2>/dev/null | grep -q '^device$'; }
+# Android, not the adb of a Genode image (serial number G-genode)
+in_adb()
+{
+	adb devices 2>/dev/null | awk -v want="${PHONE_SERIAL:-}" '
+		NR > 1 && $2 == "device" && $1 != "G-genode" && (want == "" || $1 == want) { found = 1 }
+		END { exit !found }'
+}
 
 wait_fastboot()
 {
@@ -209,10 +223,41 @@ wait_back()
 	return 1
 }
 
+#
+# 'adb logcat' of the image, reconnected whenever its adb comes up
+#
+LOGCAT_PID=""
+start_logcat()
+{
+	: > "$RUN_DIR/logcat.log"
+	adb kill-server >/dev/null 2>&1
+	(
+		while :; do
+			adb -s G-genode wait-for-device >/dev/null 2>&1 || sleep 1
+			echo "--- adb logcat $(date +%T)" >> "$RUN_DIR/logcat.log"
+			adb -s G-genode logcat >> "$RUN_DIR/logcat.log" 2>/dev/null
+			sleep 1
+		done
+	) 9>&- &
+	LOGCAT_PID=$!
+}
+
+stop_logcat()
+{
+	[ -n "$LOGCAT_PID" ] || return
+	local children
+	children=$(pgrep -P "$LOGCAT_PID")
+	kill "$LOGCAT_PID" 2>/dev/null
+	[ -n "$children" ] && kill $children 2>/dev/null
+	wait "$LOGCAT_PID" 2>/dev/null
+	LOGCAT_PID=""
+}
+
 SERIAL_PID=""
 FOLLOW_PID=""
 stop_capture()
 {
+	stop_logcat
 	[ -n "$SERIAL_PID" ] || return
 	kill "$SERIAL_PID" 2>/dev/null
 	wait "$SERIAL_PID" 2>/dev/null
@@ -241,6 +286,7 @@ start_capture()
 	: > "$RUN_DIR/serial.log"
 	cat "$SERIAL" > "$RUN_DIR/serial.log" 9>&- &
 	SERIAL_PID=$!
+	start_logcat
 	if [ "$FOLLOW" = 1 ]; then
 		tail -n +1 -f --pid="$SERIAL_PID" "$RUN_DIR/serial.log" 9>&- &
 		FOLLOW_PID=$!
@@ -261,6 +307,7 @@ summary()
 		|| { FAILED=1; echo "Error: the capture could not be split" >> "$RUN_DIR/.split"; }
 	tee -a "$RUN_DIR/run.log" < "$RUN_DIR/.split"
 	rm -f "$RUN_DIR/.split"
+	[ -s "$RUN_DIR/logcat.log" ] && log "adb logcat: $(grep -c . "$RUN_DIR/logcat.log") lines (logcat.log)"
 	log ""
 	log "Logs: $RUN_DIR"
 }
@@ -439,6 +486,7 @@ capture_wait "$TIMEOUT" || log "Capture ended early (--stop)"
 resets() { grep -ac '\[BL2\]' "$RUN_DIR/serial.log"; }
 
 RESETS=$(resets)
+stop_logcat
 log "Sending RST..."
 send_reset
 RESET_PENDING=0
