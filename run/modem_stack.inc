@@ -270,7 +270,7 @@ proc modem_stack_start_nodes { fw_version ril_log_level pixel_modem_config } {
     + service Android_binder
       + default-policy | + child ril-daemon
     + template | service: cpboot-daemon | caps: 600 | ram: 400M
-      + loader
+      + loader | log_level: } $ril_log_level {
         + env | value: ANDROID_ROOT=/system
         + property_service
         + chardev | prefix: /dev/umts_
@@ -331,7 +331,7 @@ proc modem_stack_start_nodes { fw_version ril_log_level pixel_modem_config } {
                 + dir radio | + inline .keep | : keep
         + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc | rng: /dev/random | cwd: /
     + template | service: RFS-daemon | caps: 600 | ram: 200M
-      + loader
+      + loader | log_level: } $ril_log_level {
         + env | value: ANDROID_ROOT=/system
         + property_service
         + chardev | prefix: /dev/umts_
@@ -353,7 +353,7 @@ proc modem_stack_start_nodes { fw_version ril_log_level pixel_modem_config } {
             + dir data | + dir vendor | + dir log | + dir rfsd | + inline .keep | : keep
         + libc | stdout: /dev/log | stderr: /dev/log | rtc: /dev/rtc | rng: /dev/random | cwd: /
     + template | service: init.shared_modem_platform | caps: 600 | ram: 200M
-      + loader
+      + loader | log_level: } $ril_log_level {
         + env | value: ANDROID_ROOT=/system
         + property_service
         + chardev | prefix: /dev/umts_
